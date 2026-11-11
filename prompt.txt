@@ -1,0 +1,61 @@
+Act as a Principal AI Engineer and DevOps Architect. I want to build an automated, modular Merge Request (MR) architectural compliance checker using **Python**, **LangGraph**, and **Google Gemini** (`langchain-google-genai`).
+
+Please build this project in two distinct, decoupled phases. Start by implementing **Phase 1 completely**, and provide a clear architectural placeholder/interface for **Phase 2** so we can wire it up after local testing passes.
+
+---
+
+### Project Requirements & Architecture
+1. **Tech Stack:** Python 3.11+, `langgraph`, `langchain-google-genai` (using `gemini-2.5-pro` for deep reasoning or `gemini-2.5-flash` for speed), `pydantic` (for structured outputs), and `pytest`.
+2. **Modularity:** The core review engine must be completely agnostic of GitLab/GitHub. It should only accept strings (`git_diff` and `rules_markdown`) and return a strict Pydantic schema.
+
+---
+
+### PHASE 1: Local AI Engine, Modularity & Testing (Implement Now)
+Create the following modular directory structure and write complete, runnable code for each file:
+
+1. `src/schemas.py`:
+   - Define Pydantic models for structured LLM output:
+     - `Violation`: `file_path` (str), `line_number` (Optional[int]), `rule_violated` (str), `severity` (Literal["CRITICAL", "WARNING"]), `explanation` (str), `suggested_fix` (str).
+     - `ReviewResult`: `passed` (bool - False if any CRITICAL violation exists), `summary` (str), `violations` (List[Violation]).
+
+2. `src/diff_parser.py`:
+   - Write a utility to clean and filter raw git diffs (e.g., ignore lockfiles like `package-lock.json`, `poetry.lock`, images, and minified files).
+   - Chunk or split the diff by file so large MRs don't overwhelm context or degrade attention.
+
+3. `src/graph.py` (The LangGraph Workflow):
+   - Define a `ReviewState` TypedDict (`raw_diff`, `filtered_files`, `arch_rules`, `violations`, `final_report`).
+   - Build a multi-node LangGraph state machine:
+     - **Node 1 (`prepare_context`):** Filters the diff using `diff_parser.py`.
+     - **Node 2 (`evaluate_architecture`):** Uses `ChatGoogleGenerativeAI` with `.with_structured_output(ReviewResult)` to evaluate the diff against `arch_rules`. Use a strict system prompt instructing Gemini to act as a Principal Architect, ignore minor formatting/nitpicks, and only flag actual architectural violations based on the provided rules.
+     - **Node 3 (`validate_findings`):** A self-reflection/verification step (or conditional edge) that filters out low-confidence false positives before finalizing `ReviewResult`.
+
+4. `rules/architecture.md`:
+   - Create a realistic sample architectural rules file (e.g., enforcing clean architecture boundaries, forbidding database calls in controllers, requiring tenant ID checks on new endpoints).
+
+5. `cli_local.py`:
+   - A local runner script that lets me test the LangGraph pipeline locally by either:
+     - Passing a local `.diff` file path (`python cli_local.py --diff sample.diff`), OR
+     - Comparing my current local git branch against `main` (`git diff -U15 main...HEAD`).
+   - Print a clean, color-coded terminal report and exit with code `1` if `passed == False`, or `0` if `passed == True`.
+
+6. `tests/test_graph.py`:
+   - Write `pytest` unit/integration tests using realistic mock git diffs:
+     - Test Case 1: A diff with a clear architectural violation (should fail with `CRITICAL`).
+     - Test Case 2: A clean diff that follows all rules (should pass).
+     - Test Case 3: A diff with only formatting/comment changes (should pass without false positives).
+
+7. `requirements.txt` & `.env.example`:
+   - Include all required dependencies and `GOOGLE_API_KEY`.
+
+---
+
+### PHASE 2: VCS Integration & CI/CD Pipeline (Scaffold Interfaces Only for Now)
+Create a separate `src/integrations/` folder with clean abstract base classes/stubs (do not fully implement yet, just prepare the contracts so Phase 1 plugs right in):
+1. `src/integrations/vcs_base.py`: Abstract class `VCSProvider` with methods `get_mr_diff()`, `post_summary_comment(report: ReviewResult)`, and `post_inline_comments(violations: List[Violation])`.
+2. `src/integrations/gitlab_provider.py` & `github_provider.py`: Skeleton classes inheriting from `VCSProvider`.
+3. `ci/gitlab-ci.example.yml`: A commented-out template showing how `cli_local.py` (or a CI entrypoint) will run on `merge_request_event` with `allow_failure: true` initially.
+
+---
+
+### Execution Instructions
+Generate the folder tree first, then write the complete code for **Phase 1** files and the **Phase 2** skeletons. Ensure there are no truncated code blocks or `TODO` placeholders in Phase 1 logic.

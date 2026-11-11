@@ -1,0 +1,33 @@
+diff --git a/app/src/main/java/com/example/ui/MainActivity.kt b/app/src/main/java/com/example/ui/MainActivity.kt
+index e69de29..b1c2d3e 100644
+--- a/app/src/main/java/com/example/ui/MainActivity.kt
++++ b/app/src/main/java/com/example/ui/MainActivity.kt
+@@ -10,6 +10,14 @@ import androidx.appcompat.app.AppCompatActivity
+ import android.os.Bundle
++import com.example.data.local.AppDatabase
+ 
+ class MainActivity : AppCompatActivity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         setContentView(R.layout.activity_main)
++        
++        // Direct database access from Activity (Presentation layer)
++        val db = AppDatabase.getDatabase(this)
++        val users = db.userDao().getAllUsers()
+     }
+ }
+diff --git a/app/src/main/java/com/example/ui/UserViewModel.kt b/app/src/main/java/com/example/ui/UserViewModel.kt
+index a1b2c3d..d4e5f6a 100644
+--- a/app/src/main/java/com/example/ui/UserViewModel.kt
++++ b/app/src/main/java/com/example/ui/UserViewModel.kt
+@@ -5,6 +5,10 @@ import androidx.lifecycle.ViewModel
+ import android.content.Context
+ 
+ class UserViewModel : ViewModel() {
++    // CRITICAL: Storing Android UI Context inside a ViewModel causes memory leaks
++    var activityContext: Context? = null
++    
+     fun loadData() {
+     }
+ }
+

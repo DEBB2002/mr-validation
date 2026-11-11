@@ -1,0 +1,18 @@
+stages:
+  - compliance
+
+architectural_compliance_check:
+  stage: compliance
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  variables:
+    GEMINI_MODEL: "gemini-3.5-flash-lite"
+  before_script:
+    - apt-get update && apt-get install -y git
+    - pip install --upgrade pip
+    - pip install -r requirements.txt
+  script:
+    - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - python cli_local.py --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --rules rules/architecture.md
+  allow_failure: true # Initially allow_failure: true so it reports findings without failing the pipeline

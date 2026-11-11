@@ -1,0 +1,36 @@
+# ==============================================================================
+# GitLab CI/CD Pipeline Template: Merge Request Architectural Compliance Checker
+# ==============================================================================
+# This template demonstrates how to integrate the MR compliance checker into your
+# GitLab CI pipeline. Set allow_failure: true during initial rollout to observe findings
+# before strictly gating merges.
+
+# stages:
+#   - compliance
+
+# architectural_compliance_check:
+#   stage: compliance
+#   image: python:3.11-slim
+#   rules:
+#     # Trigger only on Merge Request events
+#     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+#   variables:
+#     # Ensure GOOGLE_API_KEY is configured in GitLab CI/CD Variables (masked)
+#     GOOGLE_API_KEY: "$GOOGLE_API_KEY"
+#     GEMINI_MODEL: "gemini-3.5-flash-lite"
+#   before_script:
+#     - apt-get update && apt-get install -y git
+#     - python -m pip install --upgrade pip
+#     - pip install -r requirements.txt
+#   script:
+#     # Fetch base target branch to calculate accurate diff
+#     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+#     # Run the local compliance checker against the target branch
+#     - python cli_local.py --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --rules rules/architecture.md
+#   allow_failure: true # Set to false once the team is ready to strictly block non-compliant MRs
+#   artifacts:
+#     when: always
+#     paths:
+#       - compliance_report.json # Optional artifact if json output is dumped
+#     expire_in: 7 days
+

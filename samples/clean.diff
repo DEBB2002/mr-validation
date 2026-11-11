@@ -1,0 +1,41 @@
+diff --git a/domain/src/main/java/com/example/domain/usecase/GetUserUseCase.kt b/domain/src/main/java/com/example/domain/usecase/GetUserUseCase.kt
+new file mode 100644
+index 0000000..c3d4e5f
+--- /dev/null
++++ b/domain/src/main/java/com/example/domain/usecase/GetUserUseCase.kt
+@@ -0,0 +1,11 @@
++package com.example.domain.usecase
++
++import com.example.domain.model.User
++import com.example.domain.repository.UserRepository
++
++class GetUserUseCase(
++    private val userRepository: UserRepository
++) {
++    suspend operator fun invoke(userId: String): Result<User> =
++        userRepository.getUser(userId)
++}
+diff --git a/data/src/main/java/com/example/data/repository/UserRepositoryImpl.kt b/data/src/main/java/com/example/data/repository/UserRepositoryImpl.kt
+new file mode 100644
+index 0000000..f6a7b8c
+--- /dev/null
++++ b/data/src/main/java/com/example/data/repository/UserRepositoryImpl.kt
+@@ -0,0 +1,18 @@
++package com.example.data.repository
++
++import com.example.data.remote.UserApiService
++import com.example.data.mapper.toDomain
++import com.example.domain.model.User
++import com.example.domain.repository.UserRepository
++import kotlinx.coroutines.CoroutineDispatcher
++import kotlinx.coroutines.withContext
++
++class UserRepositoryImpl(
++    private val apiService: UserApiService,
++    private val ioDispatcher: CoroutineDispatcher
++) : UserRepository {
++    override suspend fun getUser(userId: String): Result<User> = withContext(ioDispatcher) {
++        runCatching { apiService.fetchUser(userId).toDomain() }
++    }
++}
+

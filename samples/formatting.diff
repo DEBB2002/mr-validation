@@ -1,0 +1,22 @@
+diff --git a/README.md b/README.md
+index 1111111..2222222 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,5 @@
+ # Android Clean Architecture Project
+ 
++Updated architectural documentation.
++
+ Instructions for setting up the Android repository.
+diff --git a/domain/src/main/java/com/example/domain/model/User.kt b/domain/src/main/java/com/example/domain/model/User.kt
+index 3333333..4444444 100644
+--- a/domain/src/main/java/com/example/domain/model/User.kt
++++ b/domain/src/main/java/com/example/domain/model/User.kt
+@@ -1,5 +1,6 @@
+ package com.example.domain.model
+ 
++/** Represents a domain user entity. */
+ data class User(
+     val id: String,
+     val name: String,
+
