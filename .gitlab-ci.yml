@@ -16,3 +16,4 @@ architectural_compliance_check:
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
     - python cli_local.py --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --rules rules/architecture.md
   allow_failure: true # Initially allow_failure: true so it reports findings without failing the pipeline
+
