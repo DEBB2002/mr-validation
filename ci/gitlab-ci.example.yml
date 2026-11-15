@@ -32,7 +32,7 @@ architectural_compliance_check:
       --rules /tmp/mr-validation/rules/architecture.md
       --export-codequality gl-code-quality-report.json
       --post-gitlab-comments
-  allow_failure: true # Set to false to strictly block non-compliant MRs from merging
+  allow_failure: false # Strict quality gate: blocks non-compliant MRs from merging
   artifacts:
     when: always
     reports:
