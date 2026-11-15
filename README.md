@@ -1,113 +1,217 @@
 # Merge Request (MR) Architectural Compliance Checker
 
-Automated, modular architectural compliance checker for Merge Requests (Android Clean Architecture, Kotlin & Java conventions), built using **Python**, **LangGraph**, and **Google Gemini (`gemini-3.5-flash-lite`)**.
+> **An automated, modular architectural compliance engine for Merge Requests and Pull Requests.**  
+> Powered by **Python**, **LangGraph**, **Google Gemini (`gemini-3.5-flash-lite`)**, and **Smart Context Expansion**.
 
 ---
 
-## Architecture Overview
+## Table of Contents
+1. [Executive Summary](#executive-summary)
+2. [High-Level Architecture](#high-level-architecture)
+3. [Repository Structure](#repository-structure)
+4. [Multi-Node LangGraph Review Pipeline](#multi-node-langgraph-review-pipeline)
+5. [Smart Context Expansion (Beyond Raw Diffs)](#smart-context-expansion-beyond-raw-diffs)
+6. [Architectural Rules System](#architectural-rules-system)
+7. [Production CI/CD Integration (GitLab CI)](#production-cicd-integration-gitlab-ci)
+8. [Local CLI Runner & Developer Workflow](#local-cli-runner--developer-workflow)
+9. [Tested Real-World Scenarios](#tested-real-world-scenarios)
+10. [Automated Pytest Test Suite](#automated-pytest-test-suite)
+
+---
+
+## Executive Summary
+
+Modern engineering teams struggle with architectural drift: **layer boundary violations**, **data transport leaks**, **unstructured concurrency**, and **lifecycle memory leaks** that slip through code reviews unnoticed.
+
+The **MR Architectural Compliance Checker** acts as an automated Principal Software Architect in your CI/CD pipelines. It is designed around three core principles:
+1. **Completely Decoupled & Platform-Agnostic:** The core engine accepts any unified git diff and architectural guidelines defined purely in Markdown (`rules_markdown`). No framework-specific or language-specific rules are hardcoded in Python.
+2. **Beyond Raw Diffs (Smart Context Expansion):** Raw git diffs frequently hide enclosing classes, modules, and file-level imports. The engine automatically inspects the surrounding file context across any programming language (Kotlin, Java, Swift, Python, Go, TypeScript, etc.) to give the LLM full architectural awareness.
+3. **Deterministic Gating with Structured Outputs:** Powered by LangGraph and Pydantic schemas, the pipeline guarantees that any `CRITICAL` violation strictly triggers a build failure (`passed = False`), while advisory warnings inform developers without blocking merges.
+
+---
+
+## High-Level Architecture
+
+The compliance checker functions as a **centralized review engine** that any client repository (such as `MyTestApp`) pulls during Merge Request pipelines:
+
+```mermaid
+flowchart TD
+    subgraph ClientRepository ["Client Repository (e.g. MyTestApp)"]
+        MR["Developer Opens Merge Request"] --> CIPipeline["GitLab CI Pipeline (.gitlab-ci.yml)"]
+    end
+
+    subgraph CentralEngine ["Central Review Engine (mr-validation)"]
+        CIPipeline -->|"1. Clone Engine via CI_JOB_TOKEN"| Engine["Centralized mr-validation"]
+        CIPipeline -->|"2. Fetch Base Branch Diff"| RawDiff["Unified Git Diff (-U15)"]
+        Engine --> StateMachine["LangGraph Review Pipeline"]
+        RawDiff --> StateMachine
+
+        subgraph StateMachineFlow ["LangGraph Multi-Node State Machine"]
+            Node1["Node 1: prepare_context\n(Diff Filter & Smart Context Expansion)"] --> Node2["Node 2: evaluate_architecture\n(Gemini 3.5 Flash-Lite Structured Evaluation)"]
+            Node2 --> Node3["Node 3: validate_findings\n(Self-Reflection Auditor & Verification Pass)"]
+        end
+
+        StateMachine --> Report["Pydantic ReviewResult\n(passed, summary, violations, usage)"]
+    end
+
+    subgraph EvaluationOutput ["Pipeline Evaluation & Gating"]
+        Report -->|"passed == False (CRITICAL)"| Exit1["❌ Exit Code 1: Block Merge / Alert Team"]
+        Report -->|"passed == True (CLEAN / WARNINGS)"| Exit0["✅ Exit Code 0: Compliant Pipeline Pass"]
+    end
+```
+
+---
+
+## Repository Structure
 
 ```
 mr-validation/
 ├── src/
-│   ├── schemas.py           # Pydantic schemas (Violation, ReviewResult, TokenUsage)
-│   ├── diff_parser.py       # Diff filter (excludes lockfiles/binaries) & hunk chunking
-│   ├── graph.py             # LangGraph state machine (prepare -> evaluate -> validate)
-│   └── integrations/        # Phase 2 VCS Provider contracts
-│       ├── vcs_base.py
-│       ├── gitlab_provider.py
-│       └── github_provider.py
+│   ├── schemas.py           # Strict Pydantic models (Violation, ReviewResult, TokenUsage)
+│   ├── diff_parser.py       # Excludes lockfiles/binaries and chunks file diffs
+│   ├── context_expander.py  # Language-agnostic Smart Context Expansion (scope, imports, outline)
+│   ├── graph.py             # Multi-node LangGraph state machine with self-reflection
+│   └── integrations/        # VCS Provider contracts for GitLab/GitHub
+│       ├── vcs_base.py      # Abstract VCSProvider interface
+│       ├── gitlab_provider.py # GitLab discussion & MR notes provider stub
+│       └── github_provider.py # GitHub review comments provider stub
 ├── rules/
 │   └── architecture.md      # Android Clean Architecture, Kotlin & Java conventions
 ├── samples/
 │   ├── violation.diff       # Sample with Presentation & Memory leak violations
-│   ├── clean.diff           # Clean architecture compliant diff
-│   └── formatting.diff      # Comment/docs only diff
+│   ├── clean.diff           # Compliant Clean Architecture sample
+│   └── formatting.diff      # Docs and formatting-only diff sample
 ├── tests/
-│   └── test_graph.py        # Pytest test suite
+│   └── test_graph.py        # Pytest test suite (6 passing unit/integration tests)
 ├── ci/
-│   └── gitlab-ci.example.yml # GitLab CI/CD pipeline template
-├── cli_local.py             # Local CLI runner with token usage metrics
-├── requirements.txt
-└── .env
+│   └── gitlab-ci.example.yml # GitLab CI/CD template for client repositories
+├── cli_local.py             # Local CLI runner with ANSI colors and token tracking
+├── requirements.txt         # Core dependencies (LangGraph, Google GenAI, Pydantic)
+├── .env.example             # Environment variable template
+├── .env                     # Local API keys (excluded from git)
+└── README.md
 ```
 
 ---
 
-## Quick Start
+## Multi-Node LangGraph Review Pipeline
 
-### 1. Environment Configuration
-Ensure `.env` contains your Google API key and desired model:
-```bash
-GOOGLE_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-3.5-flash-lite
+The review engine is built as an executable state machine using **LangGraph** (`langgraph.graph.StateGraph`):
+
+```mermaid
+flowchart LR
+    START((Start)) --> PrepareContext["1. prepare_context\n(Filter diff & Expand Context)"]
+    PrepareContext --> EvaluateArch["2. evaluate_architecture\n(Gemini 3.5 Flash-Lite LLM Review)"]
+    EvaluateArch --> ValidateFindings["3. validate_findings\n(Self-Reflection Verification)"]
+    ValidateFindings --> END((End))
 ```
 
-### 2. Run Local CLI
-Test against sample diffs:
+### Node 1: `prepare_context`
+* Cleans and filters the unified git diff using `diff_parser.py`:
+  * Automatically ignores lockfiles (`package-lock.json`, `poetry.lock`, `gradle.lockfile`), compiled binaries (`.dex`, `.class`, `.jar`, `.aar`, `.so`), images, and minified assets.
+* Executes **Smart Context Expansion** (`context_expander.py`):
+  * Reads the modified file's surrounding source code (if present on disk or git tree).
+  * Extracts module hierarchy, namespace/package, file-level imports, and enclosing classes/functions.
 
-```bash
-# Test diff with critical architectural violations (Exits with code 1)
-python cli_local.py --diff samples/violation.diff
+### Node 2: `evaluate_architecture`
+* Formats each file diff alongside its **Expanded Context block**.
+* Calls **Google Gemini (`gemini-3.5-flash-lite`)** via `.with_structured_output(ReviewResult, include_raw=True)`.
+* Instructs Gemini to evaluate architectural compliance strictly based on the provided `arch_rules.md` while ignoring cosmetic indentation, formatting, or comments.
+* Tracks token usage (`input_tokens`, `output_tokens`, `total_tokens`).
 
-# Test clean diff following Clean Architecture (Exits with code 0)
-python cli_local.py --diff samples/clean.diff
-
-# Test against your current git branch vs main
-python cli_local.py --branch main
-```
-
-### 3. Run Test Suite
-```bash
-python -m pytest tests/test_graph.py -v
-```
+### Node 3: `validate_findings`
+* Acts as an **automated self-reflection auditor**:
+  * Cross-references every candidate violation against the modified diff lines (`+` lines) to eliminate hallucinations or false positives.
+  * Ensures `CRITICAL` severity is reserved exclusively for true architectural blockers (layer boundary crossings, memory leaks, unstructured concurrency).
+  * Enforces the hard rule: `passed = False` if any `CRITICAL` violation remains.
 
 ---
 
-## Token Usage & Model Tracking
-Every evaluation tracks and reports:
-- Model: `gemini-3.5-flash-lite`
-- Input Tokens
-- Output Tokens
-- Total Accumulated Tokens
+## Smart Context Expansion (Beyond Raw Diffs)
+
+### The Problem with Raw Git Diffs
+In a standard `git diff -U15`, only modified lines and immediate surrounding lines are shown. If a developer edits line 75 of a class:
+* The class header (`class UserViewModel : ViewModel()`) is 70 lines above and **invisible to the LLM**.
+* The file-level imports (`import com.example.data.AppDatabase`) are at line 5 and **invisible to the LLM**.
+* Without context, an LLM cannot know whether the modified class is a ViewModel, an Activity, a UseCase, or an Entity.
+
+### The Universal, Platform-Agnostic Solution
+Instead of hardcoding language-specific regex rules, `src/context_expander.py` uses language-agnostic structural heuristics that work across **Kotlin, Java, Swift, Python, Go, C#, TypeScript, Rust, and PHP**:
+
+1. **Path & Module Hierarchy:** Deconstructs the directory path (`app / src / main / java / com / example / ui / payment`).
+2. **File-Level Dependencies:** Collects all `import`, `using`, `from ... import`, or `require` statements from the source file.
+3. **Enclosing Declaration Scopes:** Scans upwards from the modified line to identify enclosing `class`, `struct`, `interface`, `trait`, `service`, `def`, `func`, or `fn` declarations and their supertypes.
+4. **File Structure Outline:** Summarizes declared types and signatures in the file.
+
+#### Raw Diff vs. Enriched Context
+
+````carousel
+```diff
+--- a/app/src/main/java/com/example/ui/payment/PaymentViewModel.kt
++++ b/app/src/main/java/com/example/ui/payment/PaymentViewModel.kt
+@@ -10,3 +10,4 @@ class PaymentViewModel : ViewModel() {
++    var activityContext: Context? = null
+```
+<!-- slide -->
+```markdown
+### File: app/src/main/java/com/example/ui/payment/PaymentViewModel.kt (Status: modified)
+[Smart Expanded Context]
+  • File: app/src/main/java/com/example/ui/payment/PaymentViewModel.kt
+  • Path Segments: app / src / main / java / com / example / ui / payment
+  • Namespace/Package: com.example.ui.payment
+  • Enclosing Scope: class PaymentViewModel : ViewModel()
+  • Declared Types: class PaymentViewModel : ViewModel()
+  • Imports/Dependencies (2): import android.content.Context, import androidx.lifecycle.ViewModel
+
+```diff
+@@ -10,3 +10,4 @@
++    var activityContext: Context? = null
+```
+````
 
 ---
 
-## Integrating into a New Project (GitLab CI/CD)
+## Architectural Rules System
 
-You can use `mr-validation` as a centralized architectural review engine across any number of repositories (e.g. `MyTestApp`). The client repositories stay lightweight and pull this engine during Merge Request pipelines.
+Architectural guidelines are completely decoupled into Markdown documents (`rules/architecture.md`). You can swap rulesets per project or language without changing a line of code.
 
-### Step 1: Authorize the New Project in `mr-validation`
+### Android Clean Architecture Reference (`rules/architecture.md`):
 
-Because `mr-validation` is a private repository, GitLab runners in other projects require inbound access authorization via `CI_JOB_TOKEN`:
+| Rule | Severity | Requirement |
+|---|:---:|---|
+| **Rule 1.1: Presentation Boundaries** | `CRITICAL` | ViewModels/Activities must never call Data layer components (Room DAOs, Retrofit API services, DB instances) directly. Must interact via Domain UseCases. |
+| **Rule 1.2: Domain Layer Purity** | `CRITICAL` | Domain layer (Entities, UseCases) must be pure Kotlin/Java with zero Android Framework (`android.*`, `androidx.*`) or ORM annotations (`@Entity`, `@Dao`). |
+| **Rule 1.3: Data Layer Encapsulation** | `CRITICAL` | Network DTOs and Room entities must not leak into Presentation layer; they must be mapped to pure Domain models via mappers. |
+| **Rule 2.1: Lifecycle & Leaks** | `CRITICAL` | ViewModels or long-lived Singletons must never retain references to Android `Context`, `Activity`, `Fragment`, or `View`. |
+| **Rule 2.2: Concurrency Lifecycles** | `CRITICAL` | Never launch coroutines using `GlobalScope`. Use structured concurrency (`viewModelScope` or `lifecycleScope`). |
+| **Rule 3.1: Immutability & State** | `WARNING` | ViewModels must expose immutable `StateFlow` to the UI. The backing `MutableStateFlow` must be private. |
+| **Rule 3.2: Dispatcher Injection** | `WARNING` | Do not hardcode `Dispatchers.IO` or `Dispatchers.Default` in repositories. Inject `CoroutineDispatcher` for unit testability. |
+| **Rule 3.3: Kotlin Null-Safety** | `WARNING` | Avoid force unwrapping `!!`. Use safe calls (`?.`), Elvis operator (`?:`), or smart casting. |
 
-Using `glab` in your terminal:
+---
+
+## Production CI/CD Integration (GitLab CI)
+
+You can integrate this review engine into any new repository on GitLab in three steps:
+
+### Step 1: Authorize the Client Project in `mr-validation`
+Because `mr-validation` is a private repository, allow the client project's runner to clone it via `CI_JOB_TOKEN`:
 ```powershell
-# 1. Retrieve the new project's ID
-$NEW_PROJECT_ID = (glab api projects/<USERNAME>%2F<NEW_PROJECT_NAME> | ConvertFrom-Json).id
+# 1. Fetch your target project ID
+$CLIENT_ID = (glab api projects/<USERNAME>%2F<PROJECT_NAME> | ConvertFrom-Json).id
 
-# 2. Allow the new project in mr-validation's job token allowlist (mr-validation ID: 88924590)
-glab api --method POST projects/88924590/job_token_scope/allowlist --raw-field target_project_id=$NEW_PROJECT_ID
+# 2. Add to inbound allowlist in mr-validation (ID: 88924590)
+glab api --method POST projects/88924590/job_token_scope/allowlist --raw-field target_project_id=$CLIENT_ID
 ```
 
-*(Or via Web UI: Open `mr-validation` > **Settings** > **CI/CD** > **Token Access** > click **Add project**).*
-
----
-
-### Step 2: Configure `GOOGLE_API_KEY` in the New Project
-
-Provide the Gemini API key for the new project's CI runner:
-
+### Step 2: Configure `GOOGLE_API_KEY`
+Add your Gemini API key as a masked CI/CD variable:
 ```powershell
-glab variable set GOOGLE_API_KEY --value "YOUR_GEMINI_API_KEY" --masked --protected=false --repo <USERNAME>/<NEW_PROJECT_NAME>
+glab variable set GOOGLE_API_KEY --value "YOUR_GEMINI_KEY" --masked --protected=false --repo <USERNAME>/<PROJECT_NAME>
 ```
 
-> **Tip:** If your repositories are housed under a GitLab Group, add `GOOGLE_API_KEY` once at **Group Settings > CI/CD > Variables**. All existing and future repositories in that group will inherit it automatically.
-
----
-
-### Step 3: Add `.gitlab-ci.yml` to the New Project
-
-Create or update `.gitlab-ci.yml` in the root of the new project:
+### Step 3: Add `.gitlab-ci.yml` to the Client Project
+Drop this standard job into `.gitlab-ci.yml` in the root of the client project:
 
 ```yaml
 stages:
@@ -117,7 +221,7 @@ architectural_compliance_check:
   stage: compliance
   image: python:3.11-slim
   rules:
-    # Trigger automatically on any Merge Request event
+    # Trigger automatically on every Merge Request
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   variables:
     GEMINI_MODEL: "gemini-3.5-flash-lite"
@@ -133,29 +237,94 @@ architectural_compliance_check:
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
     # Execute the compliance review
     - python /tmp/mr-validation/cli_local.py --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --rules /tmp/mr-validation/rules/architecture.md
-  allow_failure: true # Set to false to strictly block non-compliant MRs from merging
+  allow_failure: true # Change to false to strictly block non-compliant MRs from merging
 ```
 
 ---
 
-### Step 4: Customizing Rules per Project (Optional)
+## Local CLI Runner & Developer Workflow
 
-The checker supports custom rules via the `--rules` flag:
+Developers can test their local git branch or a `.diff` patch locally before pushing:
 
-- **Use Central Rules:** `--rules /tmp/mr-validation/rules/architecture.md` (default Android Clean Architecture).
-- **Use Project-Specific Rules:** Create a `rules.md` file directly in the client repository and point to it:
-  ```yaml
-  script:
-    - python /tmp/mr-validation/cli_local.py --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --rules ./rules.md
-  ```
+```bash
+# Compare current git branch against main
+python cli_local.py --branch main
+
+# Evaluate a specific .diff file
+python cli_local.py --diff samples/violation.diff
+
+# Use custom architectural rules or Gemini models
+python cli_local.py --branch main --rules ./custom-rules.md --model gemini-3.5-flash-lite
+```
+
+### Sample Terminal Report Output
+
+```text
+===========================================================================
+  Merge Request Architectural Compliance Checker (AI Review Engine)
+  Powered by LangGraph & Google Gemini (gemini-3.5-flash-lite)
+===========================================================================
+
+Loaded rules from: rules/architecture.md
+Loaded diff from:  samples/violation.diff
+
+Running LangGraph review workflow using gemini-3.5-flash-lite...
+
+--- EVALUATION SUMMARY ---
+The pull request contains critical architectural violations including direct database access from the Presentation layer (Activity) and storing an Android Context reference inside a ViewModel.
+
+--- ARCHITECTURAL VIOLATIONS DETECTED (2) ---
+1. [CRITICAL] app/src/main/java/com/example/ui/MainActivity.kt:18
+   Rule: Presentation Layer Boundaries
+   Explanation: Activities, Fragments, and ViewModels must never call Data Layer components directly.
+   Suggested Fix: Remove direct database calls from MainActivity. Delegate data fetching to a Domain UseCase.
+
+2. [CRITICAL] app/src/main/java/com/example/ui/UserViewModel.kt:9
+   Rule: No UI Context or View References in ViewModels
+   Explanation: Storing activityContext in a ViewModel causes severe activity and memory leaks across configuration changes.
+   Suggested Fix: Remove activityContext property from UserViewModel.
+
+--- GEMINI USAGE METRICS ---
+  • Model:         gemini-3.5-flash-lite
+  • Input Tokens:  4,096
+  • Output Tokens: 825
+  • Total Tokens:  4,921
+
+===========================================================================
+>>> RESULT: FAILED (Critical architectural violations must be resolved) <<<
+===========================================================================
+```
 
 ---
 
-### Local Testing (Developers Pre-Push)
+## Tested Real-World Scenarios
 
-Developers can run the check locally on their machine before pushing to GitLab:
+The engine was tested in production across 7 live Merge Requests in [`MyTestApp`](https://gitlab.com/debbiswas2002/MyTestApp):
+
+| MR | Scenario Name | Test Objective | Pipeline Outcome |
+|:---:|---|---|:---:|
+| **[!1](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/1)** | Clean Architecture Initial Refactoring | Verifies compliant 3-layer architecture with DTO mapping | ✅ **PASSED** (0 Violations) |
+| **[!2](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/2)** | Payment Module with Violations | Tests multi-violation detection: direct DB query, Context in ViewModel, and Android framework in Domain | ❌ **FAILED** (3 CRITICAL) |
+| **[!3](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/3)** | Memory Leak & GlobalScope in ViewModel | Tests lifecycle leak detection (`Activity` in ViewModel) & `GlobalScope.launch` | ❌ **FAILED** (2 CRITICAL) |
+| **[!4](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/4)** | Presentation Boundary Breach & DTO Leak | Tests layer boundary breach (Activity directly querying API) & raw DTO leakage to UI | ❌ **FAILED** (2 CRITICAL) |
+| **[!5](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/5)** | Kotlin Conventions & Mutability Warnings | Tests non-blocking advisory warnings: public `MutableStateFlow`, hardcoded `Dispatchers.IO`, and `!!` operator | ⚠️ **PASSED (w/ 3 Warnings)** |
+| **[!6](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/6)** | Documentation & KDoc Comments | Tests false-positive resilience on markdown and code comment edits | ✅ **PASSED** (0 Violations) |
+| **[!7](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/7)** | Full Clean Architecture Feature (Product Catalog) | Complete end-to-end feature module: Domain UseCase, Data DTO mapper with injected Dispatcher, Compose screen | ✅ **PASSED** (0 Violations) |
+
+---
+
+## Automated Pytest Test Suite
+
+The test suite in [`tests/test_graph.py`](tests/test_graph.py) runs unit tests on diff parsing and Pydantic models, plus end-to-end integration tests using Gemini:
 
 ```powershell
-# From the client project root:
-python E:\Agentic\mr-validation\cli_local.py --branch main
+python -m pytest tests/test_graph.py -v
 ```
+
+### Test Coverage:
+* `test_diff_parser_filters_lockfiles_and_binaries`: Ensures lockfiles and binary media are excluded.
+* `test_pydantic_schema_enforces_critical_failure`: Verifies `ReviewResult` validator enforces `passed = False` whenever a `CRITICAL` violation is present.
+* `test_smart_context_expansion_platform_agnostic`: Verifies universal header parsing and enclosing scope detection.
+* `test_critical_architectural_violation_detected`: Integration test on diff with critical violations (must fail).
+* `test_clean_architecture_diff_passes`: Integration test on compliant Clean Architecture diff (must pass).
+* `test_formatting_and_comments_no_false_positives`: Verifies zero false positives on comment/documentation edits.
