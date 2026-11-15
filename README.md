@@ -13,9 +13,11 @@
 5. [Smart Context Expansion (Beyond Raw Diffs)](#smart-context-expansion-beyond-raw-diffs)
 6. [Architectural Rules System](#architectural-rules-system)
 7. [Production CI/CD Integration (GitLab CI)](#production-cicd-integration-gitlab-ci)
-8. [Local CLI Runner & Developer Workflow](#local-cli-runner--developer-workflow)
-9. [Tested Real-World Scenarios](#tested-real-world-scenarios)
-10. [Automated Pytest Test Suite](#automated-pytest-test-suite)
+8. [Native GitLab Code Quality Report Integration (MR Widget)](#native-gitlab-code-quality-report-integration-mr-widget)
+9. [GitLab MR Bot Comments & Inline Discussions (GitLabProvider)](#gitlab-mr-bot-comments--inline-discussions-gitlabprovider)
+10. [Local CLI Runner & Developer Workflow](#local-cli-runner--developer-workflow)
+11. [Tested Real-World Scenarios](#tested-real-world-scenarios)
+12. [Automated Pytest Test Suite](#automated-pytest-test-suite)
 
 ---
 
@@ -204,10 +206,14 @@ $CLIENT_ID = (glab api projects/<USERNAME>%2F<PROJECT_NAME> | ConvertFrom-Json).
 glab api --method POST projects/88924590/job_token_scope/allowlist --raw-field target_project_id=$CLIENT_ID
 ```
 
-### Step 2: Configure `GOOGLE_API_KEY`
-Add your Gemini API key as a masked CI/CD variable:
+### Step 2: Configure CI/CD Variables
+Configure your Gemini API key and GitLab token as masked CI/CD variables:
 ```powershell
+# Required: Google Gemini API Key
 glab variable set GOOGLE_API_KEY --value "YOUR_GEMINI_KEY" --masked --protected=false --repo <USERNAME>/<PROJECT_NAME>
+
+# Optional (for automated MR bot comments & inline suggestions):
+glab variable set GITLAB_TOKEN --value "YOUR_GITLAB_ACCESS_TOKEN" --masked --protected=false --repo <USERNAME>/<PROJECT_NAME>
 ```
 
 ### Step 3: Add `.gitlab-ci.yml` to the Client Project
@@ -233,11 +239,83 @@ architectural_compliance_check:
     - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/debbiswas2002/mr-validation.git /tmp/mr-validation
     - pip install -r /tmp/mr-validation/requirements.txt
   script:
-    # Fetch base target branch (e.g. main)
+    # 1. Fetch base target branch (e.g. main)
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-    # Execute the compliance review
-    - python /tmp/mr-validation/cli_local.py --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --rules /tmp/mr-validation/rules/architecture.md
+    # 2. Execute compliance review with Code Quality JSON artifact and automated MR bot comments
+    - >
+      python /tmp/mr-validation/cli_local.py
+      --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      --rules /tmp/mr-validation/rules/architecture.md
+      --export-codequality gl-code-quality-report.json
+      --post-gitlab-comments
   allow_failure: true # Change to false to strictly block non-compliant MRs from merging
+  artifacts:
+    when: always
+    reports:
+      # Native GitLab MR Code Quality widget integration
+      codequality: gl-code-quality-report.json
+    paths:
+      - gl-code-quality-report.json
+    expire_in: 7 days
+```
+
+---
+
+## Native GitLab Code Quality Report Integration (MR Widget)
+
+The compliance checker exports violations into GitLab's native [Code Quality report schema](https://docs.gitlab.com/ee/ci/testing/code_quality.html) (`src/codequality.py`).
+
+### Generated `gl-code-quality-report.json` Format:
+```json
+[
+  {
+    "description": "Activities, Fragments, and ViewModels must never call Data Layer components directly. (Suggested Fix: Introduce a Domain UseCase or Repository interface)",
+    "check_name": "Rule 1.1: Presentation Layer Boundaries",
+    "fingerprint": "d12bc9aa6eba6ddd354e28071b17b535",
+    "severity": "critical",
+    "location": {
+      "path": "app/src/main/java/com/example/ui/MainActivity.kt",
+      "lines": {
+        "begin": 17
+      }
+    }
+  }
+]
+```
+
+### Native GitLab MR Widget Integration:
+When `artifacts: reports: codequality: gl-code-quality-report.json` is configured in `.gitlab-ci.yml`:
+* **MR Overview Widget:** Directly embeds an architectural health card:
+  > *"Code Quality degraded on 2 points"*
+* **Expandable Issue List:** Shows severity icons (🔴 Critical / 🟡 Minor), rule names, and clickable links to the exact file path and line number in the MR diff.
+* **Diff Comparison:** Highlights newly introduced violations in the current MR compared against the target branch (`main`).
+
+---
+
+## GitLab MR Bot Comments & Inline Discussions (`GitLabProvider`)
+
+The review engine includes a full Version Control System provider (`src/integrations/gitlab_provider.py`) implementing `VCSProvider`:
+
+### 1. High-Level Summary Note (Idempotent)
+* Posts an overview markdown report to `POST /projects/:id/merge_requests/:mr_iid/notes`.
+* Displays review status badge (`❌ FAILED`, `⚠️ PASSED WITH WARNINGS`, or `✅ PASSED`), an executive summary, a structured violations table, and collapsible LLM inference metrics.
+* **Idempotent:** Embeds a hidden marker `<!-- mr-validation-summary-marker -->`. Subsequent pipeline runs automatically **update the existing note** via `PUT /notes/:id` to prevent comment clutter on the MR.
+
+### 2. Line-Level Inline Discussions & Code Suggestions
+* Posts directly to the affected line in the MR diff via `POST /projects/:id/merge_requests/:mr_iid/discussions`.
+* Anchors discussion threads precisely using `diff_refs` (`base_sha`, `start_sha`, `head_sha`) and `position.new_line`.
+* **Single-Click Suggestion Blocks:** Employs GitLab's native ` ```suggestion ```` blocks so developers can apply architectural fixes with a single click right in the GitLab code review UI:
+
+```markdown
+### 🔴 `[CRITICAL]` Architectural Violation: Rule 2.1: Lifecycle & Memory Leaks
+
+**Explanation:** A ViewModel must never retain a reference to an Activity or Context object. Retaining hostActivity in LoginViewModel causes activity leaks across configuration changes.
+
+**Suggested Action:**
+```suggestion
+// Remove hostActivity property completely
+// Pass callbacks or rely on ViewModel events / StateFlow
+```
 ```
 
 ---
@@ -252,6 +330,12 @@ python cli_local.py --branch main
 
 # Evaluate a specific .diff file
 python cli_local.py --diff samples/violation.diff
+
+# Export native GitLab Code Quality report artifact
+python cli_local.py --diff samples/violation.diff --export-codequality gl-code-quality-report.json
+
+# Post automated MR bot review and inline discussions to GitLab
+python cli_local.py --branch main --export-codequality gl-code-quality-report.json --post-gitlab-comments
 
 # Use custom architectural rules or Gemini models
 python cli_local.py --branch main --rules ./custom-rules.md --model gemini-3.5-flash-lite

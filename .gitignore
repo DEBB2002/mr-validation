@@ -19,3 +19,7 @@ ENV/
 .DS_Store
 Thumbs.db
 
+
+# Reports & Artifacts
+gl-code-quality-report.json
+*.report.json

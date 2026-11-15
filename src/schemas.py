@@ -19,6 +19,7 @@ class Violation(BaseModel):
 
 class TokenUsage(BaseModel):
     """Token usage metrics recorded during evaluation."""
+    model_name: Optional[str] = Field(default=None, description="The LLM model name used for evaluation.")
     input_tokens: int = Field(default=0, description="Total input prompt tokens.")
     output_tokens: int = Field(default=0, description="Total output completion tokens.")
     total_tokens: int = Field(default=0, description="Combined token usage.")

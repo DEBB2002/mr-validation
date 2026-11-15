@@ -2,6 +2,7 @@
 """
 CLI Local Runner for Merge Request Architectural Compliance Checker.
 Evaluates local git diffs or .diff files against architectural guidelines using LangGraph & Gemini.
+Supports exporting GitLab Code Quality JSON reports and posting bot discussions to GitLab MRs.
 """
 
 import os
@@ -19,6 +20,8 @@ from colorama import init, Fore, Style
 from dotenv import load_dotenv
 from src.graph import run_review
 from src.diff_parser import filter_and_parse_diff
+from src.codequality import save_codequality_report
+from src.integrations.gitlab_provider import GitLabProvider
 
 # Initialize colorama for Windows/Linux/macOS cross-platform ANSI support
 init(autoreset=True)
@@ -83,7 +86,7 @@ def display_report(report, ignored_files, model_name: str):
     else:
         print(f"{Fore.GREEN}{Style.BRIGHT}✓ No architectural violations found! All guidelines satisfied.{Style.RESET_ALL}\n")
 
-    # Display Token Usage Statistics ("check the whole usage of it")
+    # Display Token Usage Statistics
     print(f"{Fore.CYAN}{Style.BRIGHT}--- GEMINI USAGE METRICS ---{Style.RESET_ALL}")
     if report.usage:
         print(f"  • Model:         {Fore.YELLOW}{model_name}{Style.RESET_ALL}")
@@ -94,7 +97,7 @@ def display_report(report, ignored_files, model_name: str):
         print("  • Token usage data not recorded.")
     print()
 
-    # Final Result
+    # Final Result Banner
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 75}{Style.RESET_ALL}")
     if report.passed:
         print(f"{Fore.GREEN}{Style.BRIGHT}>>> RESULT: PASSED (MR is architecturally compliant) <<<{Style.RESET_ALL}")
@@ -122,6 +125,35 @@ def main():
         type=str,
         default=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
         help="Gemini model name (default: gemini-3.5-flash-lite)."
+    )
+    parser.add_argument(
+        "--export-codequality", "-cq",
+        type=str,
+        default=None,
+        help="Export findings to a GitLab Code Quality JSON artifact (e.g. gl-code-quality-report.json)."
+    )
+    parser.add_argument(
+        "--post-gitlab-comments",
+        action="store_true",
+        help="Post summary and inline discussion comments to GitLab MR via API."
+    )
+    parser.add_argument(
+        "--gitlab-token",
+        type=str,
+        default=os.getenv("GITLAB_TOKEN") or os.getenv("CI_JOB_TOKEN"),
+        help="GitLab API Access Token (defaults to GITLAB_TOKEN or CI_JOB_TOKEN env)."
+    )
+    parser.add_argument(
+        "--gitlab-project",
+        type=str,
+        default=os.getenv("CI_PROJECT_ID") or os.getenv("CI_PROJECT_PATH"),
+        help="GitLab Project ID or URL-encoded path (defaults to CI_PROJECT_ID env)."
+    )
+    parser.add_argument(
+        "--gitlab-mr-iid",
+        type=str,
+        default=os.getenv("CI_MERGE_REQUEST_IID"),
+        help="GitLab Merge Request IID (defaults to CI_MERGE_REQUEST_IID env)."
     )
 
     args = parser.parse_args()
@@ -166,10 +198,51 @@ def main():
         print(f"{Fore.RED}Failed during architectural review execution: {e}{Style.RESET_ALL}", file=sys.stderr)
         sys.exit(3)
 
-    # 4. Display Results
+    # 4. Display Results in Terminal
     display_report(report, ignored_files, args.model)
 
-    # 5. Exit code: 0 if passed, 1 if failed
+    # 5. Export GitLab Code Quality Report if requested
+    if args.export_codequality:
+        try:
+            saved_file = save_codequality_report(report, args.export_codequality)
+            print(f"{Fore.GREEN}✓ Exported GitLab Code Quality report to: {Fore.YELLOW}{saved_file}{Style.RESET_ALL}\n")
+        except Exception as e:
+            print(f"{Fore.RED}Failed to export Code Quality report: {e}{Style.RESET_ALL}", file=sys.stderr)
+
+    # 6. Post GitLab Comments if requested or configured
+    if args.post_gitlab_comments:
+        token = args.gitlab_token
+        project_id = args.gitlab_project
+        mr_iid = args.gitlab_mr_iid
+
+        if not (token and project_id and mr_iid):
+            print(
+                f"{Fore.YELLOW}⚠️ Skipping GitLab MR comments: missing required credentials.\n"
+                f"   (Token: {'SET' if token else 'NOT SET'}, "
+                f"Project: {project_id or 'NOT SET'}, "
+                f"MR IID: {mr_iid or 'NOT SET'}){Style.RESET_ALL}\n"
+            )
+        else:
+            print(f"{Fore.CYAN}Publishing architectural review to GitLab MR !{mr_iid} (Project: {project_id})...{Style.RESET_ALL}")
+            try:
+                gl_provider = GitLabProvider(token=token, project_id=project_id)
+                
+                # 6a. Post high-level summary note
+                summary_ok = gl_provider.post_summary_comment(mr_iid, report)
+                if summary_ok:
+                    print(f"  {Fore.GREEN}✓ Successfully posted/updated summary note on MR !{mr_iid}{Style.RESET_ALL}")
+                else:
+                    print(f"  {Fore.YELLOW}⚠️ Failed to post summary note on MR !{mr_iid}{Style.RESET_ALL}")
+
+                # 6b. Post inline discussion comments for violations
+                if report.violations:
+                    inline_count = gl_provider.post_inline_comments(mr_iid, report.violations)
+                    print(f"  {Fore.GREEN}✓ Posted {inline_count} inline discussion comments with code suggestions.{Style.RESET_ALL}")
+                print()
+            except Exception as e:
+                print(f"  {Fore.RED}⚠️ Failed to post GitLab MR comments: {e}{Style.RESET_ALL}\n", file=sys.stderr)
+
+    # 7. Exit code: 0 if passed, 1 if failed
     sys.exit(0 if report.passed else 1)
 
 
