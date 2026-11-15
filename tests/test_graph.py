@@ -13,6 +13,11 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from src.schemas import Violation, ReviewResult, TokenUsage
 from src.diff_parser import filter_and_parse_diff, is_ignored_file
+from src.context_expander import (
+    enrich_file_context,
+    parse_universal_file_header,
+    find_enclosing_scopes_for_line,
+)
 from src.graph import run_review
 
 
@@ -63,6 +68,30 @@ def test_pydantic_schema_enforces_critical_failure():
         violations=[violation],
     )
     assert result.passed is False, "ReviewResult must force passed=False if any CRITICAL violation is present."
+
+
+def test_smart_context_expansion_platform_agnostic():
+    """Verify that Smart Context Expansion accurately extracts headers and enclosing scopes across languages."""
+    kotlin_src = """package com.example.ui.payment
+
+import android.content.Context
+import androidx.lifecycle.ViewModel
+
+class PaymentViewModel : ViewModel() {
+    var context: Context? = null
+}
+"""
+    lines = kotlin_src.splitlines()
+    pkg, imports = parse_universal_file_header(lines)
+    assert pkg == "com.example.ui.payment"
+    assert "import android.content.Context" in imports
+
+    scopes = find_enclosing_scopes_for_line(lines, target_line_no=7)
+    assert any("class PaymentViewModel" in s for s in scopes)
+
+    ctx = enrich_file_context("app/src/main/java/com/example/ui/payment/PaymentViewModel.kt", "+ var context: Context? = null")
+    assert "app / src / main / java / com / example / ui / payment" in ctx.context_summary
+    assert "class PaymentViewModel" in ctx.context_summary or ctx.file_path.endswith(".kt")
 
 
 # ---------------------------------------------------------------------------

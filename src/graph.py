@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, START, END
 
 from src.schemas import Violation, ReviewResult, TokenUsage
 from src.diff_parser import filter_and_parse_diff, ParsedFileDiff
+from src.context_expander import enrich_file_context, EnrichedFileContext
 
 load_dotenv()
 
@@ -17,6 +18,7 @@ class ReviewState(TypedDict):
     raw_diff: str
     filtered_files: List[Dict[str, Any]]
     ignored_files: List[Dict[str, str]]
+    enriched_contexts: Dict[str, Dict[str, Any]]
     arch_rules: str
     violations: List[Violation]
     final_report: Optional[ReviewResult]
@@ -38,15 +40,22 @@ def get_gemini_llm(model_name: Optional[str] = None) -> ChatGoogleGenerativeAI:
 
 def prepare_context_node(state: ReviewState) -> Dict[str, Any]:
     """
-    Node 1: Cleans and filters raw git diffs.
-    Excludes lockfiles, images, binaries, and build outputs.
+    Node 1: Cleans and filters raw git diffs, then executes language-agnostic
+    Smart Context Expansion to extract surrounding module hierarchies, enclosing scopes,
+    and active file imports without hardcoded regex or framework assumptions.
     """
     raw_diff = state.get("raw_diff", "")
     valid_files, ignored_files = filter_and_parse_diff(raw_diff)
 
+    enriched_contexts: Dict[str, Dict[str, Any]] = {}
+    for f in valid_files:
+        ctx: EnrichedFileContext = enrich_file_context(f.file_path, f.patch)
+        enriched_contexts[f.file_path] = ctx.model_dump()
+
     return {
         "filtered_files": [f.model_dump() for f in valid_files],
         "ignored_files": ignored_files,
+        "enriched_contexts": enriched_contexts,
         "violations": [],
         "token_usage": state.get("token_usage") or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
     }
@@ -54,10 +63,11 @@ def prepare_context_node(state: ReviewState) -> Dict[str, Any]:
 
 def evaluate_architecture_node(state: ReviewState) -> Dict[str, Any]:
     """
-    Node 2: Evaluates filtered diff chunks against architectural rules
-    using Google Gemini with structured output.
+    Node 2: Evaluates diff chunks enriched with smart surrounding context
+    against the provided architectural guidelines using Google Gemini (gemini-3.5-flash-lite).
     """
     filtered_files = state.get("filtered_files", [])
+    enriched_contexts = state.get("enriched_contexts", {})
     arch_rules = state.get("arch_rules", "")
     token_usage = dict(state.get("token_usage", {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}))
     model_name = state.get("model_name") or os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
@@ -76,31 +86,42 @@ def evaluate_architecture_node(state: ReviewState) -> Dict[str, Any]:
             "token_usage": token_usage,
         }
 
-    # Format the code diffs for Gemini
+    # Format the code diffs WITH Smart Expanded Context
     diff_text_blocks = []
     for f in filtered_files:
+        file_path = f.get("file_path", "")
         status = "new" if f.get("is_new") else ("deleted" if f.get("is_deleted") else "modified")
+        ctx_dict = enriched_contexts.get(file_path, {})
+        context_summary = ctx_dict.get("context_summary", "")
+
+        context_block = f"\n[Smart Expanded Context]\n{context_summary}\n" if context_summary else ""
+
         diff_text_blocks.append(
-            f"### File: {f.get('file_path')} (Status: {status})\n```diff\n{f.get('patch', '')}\n```"
+            f"### File: {file_path} (Status: {status}){context_block}\n"
+            f"```diff\n{f.get('patch', '')}\n```"
         )
     formatted_diff = "\n\n".join(diff_text_blocks)
 
     system_prompt = (
-        "You are a Principal Android Architect and Lead DevOps Compliance Reviewer.\n"
+        "You are an expert Principal Software Architect and DevOps Reviewer.\n"
         "Your task is to review Git Merge Request diffs strictly against the provided Architectural Rules.\n\n"
-        "GUIDELINES:\n"
-        "1. Focus strictly on Architectural Integrity, Clean Architecture boundaries, Android Lifecycle safety, "
-        "and Kotlin/Java conventions.\n"
-        "2. Do NOT flag minor styling, indentation, reordered imports, or trivial comment edits unless they violate stated rules.\n"
-        "3. Mark severity as 'CRITICAL' if changes break layer boundaries (e.g. Presentation directly querying DB/network, "
-        "Domain importing Android framework, Activity/Context leaking in ViewModel, GlobalScope coroutine), which blocks the MR.\n"
-        "4. Mark severity as 'WARNING' for convention issues (e.g. hardcoded Dispatchers, public mutable StateFlow, !! operator).\n"
+        "SMART ARCHITECTURAL CONTEXT:\n"
+        "Each diff hunk is enriched with language-agnostic contextual metadata (Directory Hierarchy, "
+        "File Namespace/Package, Enclosing Class/Function Scope, and File-Level Imports/Dependencies). "
+        "Use this expanded context to understand the structural role of the modified code even if the outer "
+        "class or module definition is outside the diff hunk.\n\n"
+        "EVALUATION GUIDELINES:\n"
+        "1. Strictly enforce the provided Architectural Rules against the diff and its expanded context.\n"
+        "2. Do NOT flag cosmetic styling, whitespace, indentation, or minor comment edits unless they violate stated rules.\n"
+        "3. Mark severity as 'CRITICAL' if changes break architectural boundaries, violate layer encapsulation, "
+        "cause resource/lifecycle leaks, or violate core design rules specified in the architecture document.\n"
+        "4. Mark severity as 'WARNING' for non-blocking conventions, testability issues, or advisory guidelines.\n"
         "5. If no architectural rules are violated, return passed=True with an empty violations list."
     )
 
     user_prompt = (
         f"# ARCHITECTURAL RULES:\n{arch_rules}\n\n"
-        f"# MERGE REQUEST CODE DIFF TO EVALUATE:\n{formatted_diff}\n\n"
+        f"# MERGE REQUEST CODE DIFF TO EVALUATE (WITH SMART EXPANDED CONTEXT):\n{formatted_diff}\n\n"
         "Please perform your architectural evaluation and return the structured ReviewResult."
     )
 
@@ -148,7 +169,7 @@ def validate_findings_node(state: ReviewState) -> Dict[str, Any]:
     if not candidate_violations:
         final_report = ReviewResult(
             passed=True,
-            summary="All modified files comply with the Android Clean Architecture rules. No violations detected.",
+            summary="All modified files comply with the provided architectural rules. No violations detected.",
             violations=[],
             usage=TokenUsage(**token_usage),
         )
@@ -175,7 +196,7 @@ def validate_findings_node(state: ReviewState) -> Dict[str, Any]:
         "Critically evaluate each candidate violation:\n"
         "1. Verify that the violation actually exists in the modified diff lines (+ lines).\n"
         "2. Discard any false positives, hallucinated lines, or nitpicks that are not true violations of the rules.\n"
-        "3. Confirm that 'CRITICAL' severity is reserved for true architectural blockers (layer violations, memory leaks).\n"
+        "3. Confirm that 'CRITICAL' severity is reserved for true architectural blockers.\n"
         "4. Return the finalized ReviewResult containing only verified, high-confidence violations."
     )
 
@@ -230,7 +251,7 @@ def validate_findings_node(state: ReviewState) -> Dict[str, Any]:
 
 
 def build_review_graph() -> Any:
-    """Builds and compiles the LangGraph state machine workflow."""
+    """Builds and compiles the LangGraph state machine workflow with Smart Context Expansion."""
     workflow = StateGraph(ReviewState)
 
     # Add Nodes
@@ -256,6 +277,7 @@ def run_review(raw_diff: str, arch_rules: str, model_name: Optional[str] = None)
         "raw_diff": raw_diff,
         "filtered_files": [],
         "ignored_files": [],
+        "enriched_contexts": {},
         "arch_rules": arch_rules,
         "violations": [],
         "final_report": None,
@@ -265,4 +287,3 @@ def run_review(raw_diff: str, arch_rules: str, model_name: Optional[str] = None)
 
     result = app.invoke(initial_state)
     return result["final_report"]
-
