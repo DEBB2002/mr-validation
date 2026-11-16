@@ -101,16 +101,16 @@ class GitLabProvider(VCSProvider):
         """
         Builds the markdown payload for the high-level MR summary comment.
         """
-        status_badge = "❌ **FAILED**" if not report.passed else "✅ **PASSED**"
+        status_badge = "**[FAILED]**" if not report.passed else "**[PASSED]**"
         if report.passed and any(v.severity.upper() == "WARNING" for v in report.violations):
-            status_badge = "⚠️ **PASSED WITH WARNINGS**"
+            status_badge = "**[PASSED WITH WARNINGS]**"
 
         lines = [
             SUMMARY_MARKER,
-            "## 🏛️ Merge Request Architectural Compliance Review",
+            "## Merge Request Architectural Compliance Review",
             f"**Review Status:** {status_badge}",
             "",
-            "### 📋 Executive Summary",
+            "### Executive Summary",
             report.summary.strip(),
             "",
         ]
@@ -119,25 +119,25 @@ class GitLabProvider(VCSProvider):
             critical_count = sum(1 for v in report.violations if v.severity.upper() == "CRITICAL")
             warning_count = sum(1 for v in report.violations if v.severity.upper() == "WARNING")
             
-            lines.append(f"### ⚠️ Detected Architectural Violations ({len(report.violations)})")
+            lines.append(f"### Detected Architectural Violations ({len(report.violations)})")
             lines.append(f"**Critical Issues (Blockers):** `{critical_count}` | **Advisory Warnings:** `{warning_count}`\n")
             lines.append("| Severity | File & Location | Architectural Rule | Details & Recommendation |")
             lines.append("|---|---|---|---|")
 
             for v in report.violations:
-                sev_icon = "🔴 `CRITICAL`" if v.severity.upper() == "CRITICAL" else "🟡 `WARNING`"
+                sev_icon = "`[CRITICAL]`" if v.severity.upper() == "CRITICAL" else "`[WARNING]`"
                 loc = f"`{v.file_path}:{v.line_number}`" if v.line_number else f"`{v.file_path}`"
-                fix_text = f"<br/>💡 **Recommendation:** {v.suggested_fix}" if v.suggested_fix else ""
+                fix_text = f"<br/>**Recommendation:** {v.suggested_fix}" if v.suggested_fix else ""
                 lines.append(f"| {sev_icon} | {loc} | **{v.rule_violated}** | {v.explanation}{fix_text} |")
             lines.append("")
         else:
-            lines.append("### ✅ Compliance Verified")
+            lines.append("### Compliance Verified")
             lines.append("No architectural violations found. All layer boundaries, lifecycle bounds, and conventions are satisfied.\n")
 
         if report.usage:
             model_used = getattr(report.usage, "model_name", None) or "gemini-3.5-flash-lite"
             lines.append("<details>")
-            lines.append("<summary>📊 <b>LLM Inference & Token Usage Metrics</b></summary>\n")
+            lines.append("<summary><b>LLM Inference & Token Usage Metrics</b></summary>\n")
             lines.append(f"- **Engine Model:** `{model_used}`")
             lines.append(f"- **Input Tokens:** `{report.usage.input_tokens:,}`")
             lines.append(f"- **Output Tokens:** `{report.usage.output_tokens:,}`")
@@ -223,7 +223,7 @@ class GitLabProvider(VCSProvider):
             if not v.line_number or v.line_number <= 0:
                 continue
 
-            sev_badge = "🔴 `[CRITICAL]`" if v.severity.upper() == "CRITICAL" else "🟡 `[WARNING]`"
+            sev_badge = "`[CRITICAL]`" if v.severity.upper() == "CRITICAL" else "`[WARNING]`"
             
             body_parts = [
                 f"### {sev_badge} Architectural Violation: {v.rule_violated}",
@@ -269,7 +269,7 @@ class GitLabProvider(VCSProvider):
                 )
                 # Fallback to general note referencing the file and line
                 fallback_data = {
-                    "body": f"⚠️ **[{v.severity}] {v.rule_violated}** on `{v.file_path}:{v.line_number}`:\n\n{v.explanation}\n\n*Recommendation:* {v.suggested_fix}"
+                    "body": f"**[{v.severity}] {v.rule_violated}** on `{v.file_path}:{v.line_number}`:\n\n{v.explanation}\n\n*Recommendation:* {v.suggested_fix}"
                 }
                 fb_resp = self._request(f"merge_requests/{mr_id}/notes", method="POST", data=fallback_data)
                 if fb_resp.status_code in (200, 201):

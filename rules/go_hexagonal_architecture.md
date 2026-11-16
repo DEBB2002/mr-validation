@@ -38,3 +38,4 @@ This rulebook defines architectural boundaries and guidelines for Go services fo
 ### Rule 2.2: Context Propagation
 - **Severity:** `WARNING`
 - **Requirement:** Function signatures performing I/O must accept `ctx context.Context` as the first argument.
+

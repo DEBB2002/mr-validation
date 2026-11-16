@@ -32,3 +32,4 @@ This rulebook defines architectural boundaries and conventions for iOS applicati
 - **Severity:** `WARNING`
 - **Requirement:** Avoid force-unwrapping optionals (`!`) and force-try (`try!`).
 - **Enforcement:** Use `guard let`, `if let`, or nil-coalescing operator (`??`).
+
