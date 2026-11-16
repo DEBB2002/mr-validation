@@ -166,15 +166,6 @@ The review engine contains no hardcoded programming language or framework logic.
 * **Declarative Markdown Policy:** All architectural boundaries, layer separation rules, and best practices reside entirely within standard Markdown documents.
 * **Swappable Per Repository:** Teams can supply a custom rules file via the `--rules` CLI flag or CI environment variable, pointing to an internal repository standard or a centralized organizational rulebook.
 
-#### Cross-Platform Rulesets Included:
-| Platform / Language | Architecture Pattern | Included Ruleset |
-|---|---|---|
-| **Android (Kotlin / Java)** | Clean Architecture / MVI / MVVM | [`rules/architecture.md`](rules/architecture.md) |
-| **Python (FastAPI / Django / Flask)** | Clean Architecture / Layered Service Pattern | [`rules/python_architecture.md`](rules/python_architecture.md) |
-| **Go (Golang)** | Hexagonal Architecture (Ports & Adapters) | [`rules/go_hexagonal_architecture.md`](rules/go_hexagonal_architecture.md) |
-| **iOS (Swift / SwiftUI)** | VIPER / Clean Swift Architecture | [`rules/ios_viper_architecture.md`](rules/ios_viper_architecture.md) |
-| **Custom / Internal** | Domain-specific architectural boundary | Point to custom rules via `--rules` |
-
 #### Ruleset Usage Examples:
 ```bash
 # Evaluate an Android Kotlin MR
