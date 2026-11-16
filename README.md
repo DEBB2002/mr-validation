@@ -1,223 +1,255 @@
-# Merge Request (MR) Architectural Compliance Checker
+# Merge Request (MR) Architectural Compliance Engine
 
-> **An automated, modular architectural compliance engine for Merge Requests and Pull Requests.**  
-> Powered by **Python**, **LangGraph**, **Google Gemini (`gemini-3.5-flash-lite`)**, and **Smart Context Expansion**.
+> **An automated, platform-agnostic architectural compliance and quality gate for Merge Requests and Pull Requests.**  
+> Built with **Python 3.11+**, **LangGraph**, **Pydantic v2**, **Smart Context Expansion**, and **Pluggable LLMs (Google Gemini, OpenAI, Claude, or Local LLMs via vLLM/Ollama)**.
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![LangGraph](https://img.shields.io/badge/orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
+[![Pydantic v2](https://img.shields.io/badge/schema-Pydantic%20v2-e92063.svg)](https://docs.pydantic.dev/)
+[![LLM-Agnostic](https://img.shields.io/badge/LLM-Pluggable%20%26%20Swappable-green.svg)](#pluggable-llm--llmops-architecture)
+[![GitLab CI/CD](https://img.shields.io/badge/CI%2FCD-GitLab%20%26%20GitHub-fc6d26.svg)](#production-cicd-integration-gitlab-ci)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## Table of Contents
-1. [Executive Summary](#executive-summary)
-2. [High-Level Architecture](#high-level-architecture)
-3. [Repository Structure](#repository-structure)
-4. [Multi-Node LangGraph Review Pipeline](#multi-node-langgraph-review-pipeline)
+1. [Executive Summary & Problem Statement](#executive-summary--problem-statement)
+2. [End-to-End System Architecture](#end-to-end-system-architecture)
+3. [Configuration Flow & Rules Engine](#configuration-flow--rules-engine)
+4. [Pluggable LLM & LLMOps Architecture](#pluggable-llm--llmops-architecture)
 5. [Smart Context Expansion (Beyond Raw Diffs)](#smart-context-expansion-beyond-raw-diffs)
-6. [Architectural Rules System](#architectural-rules-system)
-7. [Production CI/CD Integration (GitLab CI)](#production-cicd-integration-gitlab-ci)
-8. [Native GitLab Code Quality Report Integration (MR Widget)](#native-gitlab-code-quality-report-integration-mr-widget)
-9. [GitLab MR Bot Comments & Inline Discussions (GitLabProvider)](#gitlab-mr-bot-comments--inline-discussions-gitlabprovider)
-10. [Local CLI Runner & Developer Workflow](#local-cli-runner--developer-workflow)
-11. [Tested Real-World Scenarios](#tested-real-world-scenarios)
-12. [Automated Pytest Test Suite](#automated-pytest-test-suite)
+6. [Multi-Node LangGraph State Machine](#multi-node-langgraph-state-machine)
+7. [Tools & Technologies Stack](#tools--technologies-stack)
+8. [Production Setup Guide (GitLab CI & Local CLI)](#production-setup-guide)
+9. [Native GitLab MR Widget & Reporting](#native-gitlab-mr-widget--reporting)
+10. [Tested Multi-Language Production Case Studies](#tested-multi-language-production-case-studies)
+11. [Automated Test Suite](#automated-test-suite)
 
 ---
 
-## Executive Summary
+## Executive Summary & Problem Statement
 
-Modern engineering teams struggle with architectural drift: **layer boundary violations**, **data transport leaks**, **unstructured concurrency**, and **lifecycle memory leaks** that slip through code reviews unnoticed.
+### The Problem: Silent Architectural Decay
+In fast-moving engineering organizations, conventional code quality tools have critical blind spots:
+* **Syntax Linters (Detekt, ESLint, Flake8, Ruff):** Catch stylistic, formatting, and AST-local syntax issues, but possess **zero architectural context**. They cannot understand cross-layer boundaries, domain isolation, or lifecycle lifespans.
+* **Human Code Reviews:** Reviewers focus primarily on feature requirements and PR diffs under time constraints. Layer breaches (e.g. presentation controllers directly querying database ORMs) and subtle resource leaks easily slip through unnoticed.
+* **Generic LLM Code Reviewers:** Feeding raw unified git diffs (`git diff`) into LLMs produces hallucinations and false positives because **git diffs hide enclosing classes, modules, and file imports** located outside the changed hunk.
 
-The **MR Architectural Compliance Checker** acts as an automated Principal Software Architect in your CI/CD pipelines. It is designed around three core principles:
-1. **Completely Decoupled & Platform-Agnostic:** The core engine accepts any unified git diff and architectural guidelines defined purely in Markdown (`rules_markdown`). No framework-specific or language-specific rules are hardcoded in Python.
-2. **Beyond Raw Diffs (Smart Context Expansion):** Raw git diffs frequently hide enclosing classes, modules, and file-level imports. The engine automatically inspects the surrounding file context across any programming language (Kotlin, Java, Swift, Python, Go, TypeScript, etc.) to give the LLM full architectural awareness.
-3. **Deterministic Gating with Structured Outputs:** Powered by LangGraph and Pydantic schemas, the pipeline guarantees that any `CRITICAL` violation strictly triggers a build failure (`passed = False`), while advisory warnings inform developers without blocking merges.
+### The Solution: Automated Principal Software Architect
+The **MR Architectural Compliance Engine** acts as an automated Principal Software Architect in your CI/CD pipeline:
+1. **Completely Decoupled & Platform-Agnostic:** Zero framework-specific regexes or language tokens are hardcoded in Python. All architectural policies reside in declarative Markdown rulesets (`rules/*.md`).
+2. **Context-Aware Evaluation:** Automatically inspects the surrounding file context (namespaces, imports, and enclosing class/function scopes) across any language (Kotlin, Java, Python, Go, Swift, TypeScript).
+3. **Deterministic Quality Gating:** Enforces strict CI failure (`passed = False`, `exit code 1`) whenever a `CRITICAL` violation is present, while surfacing non-blocking `WARNING` advisories.
+4. **Native VCS Integration:** Automatically generates **GitLab Code Quality JSON artifacts** (populating the native MR widget) and posts idempotent, clean review reports.
 
 ---
 
-## High-Level Architecture
+## End-to-End System Architecture
 
-The compliance checker functions as a **centralized review engine** that any client repository (such as `MyTestApp`) pulls during Merge Request pipelines:
+### High-Level Component Interaction
 
 ```mermaid
 flowchart TD
-    subgraph ClientRepository ["Client Repository (e.g. MyTestApp)"]
-        MR["Developer Opens Merge Request"] --> CIPipeline["GitLab CI Pipeline (.gitlab-ci.yml)"]
+    subgraph ClientRepo ["Client Repository (e.g. Android / Python Backend)"]
+        Dev["Developer Pushes Feature Branch"] --> OpenMR["Developer Opens Merge Request"]
+        OpenMR --> TriggerCI["GitLab CI / GitHub Actions Triggered"]
     end
 
     subgraph CentralEngine ["Central Review Engine (mr-validation)"]
-        CIPipeline -->|"1. Clone Engine via CI_JOB_TOKEN"| Engine["Centralized mr-validation"]
-        CIPipeline -->|"2. Fetch Base Branch Diff"| RawDiff["Unified Git Diff (-U15)"]
-        Engine --> StateMachine["LangGraph Review Pipeline"]
-        RawDiff --> StateMachine
+        TriggerCI -->|"1. Clone Review Engine via CI Token"| Runner["CI Job Runner (Python 3.11)"]
+        TriggerCI -->|"2. Fetch Base Branch Diff"| GitDiff["Unified Git Diff (-U15)"]
+        
+        Runner --> ContextEngine["Smart Context Expander\n(Reconstructs file scopes & dependencies)"]
+        GitDiff --> ContextEngine
+        
+        ContextEngine --> StateMachine["Multi-Node LangGraph State Machine"]
+        Ruleset["Declarative Markdown Rules\n(e.g., rules/architecture.md)"] --> StateMachine
 
-        subgraph StateMachineFlow ["LangGraph Multi-Node State Machine"]
-            Node1["Node 1: prepare_context\n(Diff Filter & Smart Context Expansion)"] --> Node2["Node 2: evaluate_architecture\n(Gemini 3.5 Flash-Lite Structured Evaluation)"]
-            Node2 --> Node3["Node 3: validate_findings\n(Self-Reflection Auditor & Verification Pass)"]
+        subgraph GraphNodes ["LangGraph Execution Pipeline"]
+            N1["Node 1: prepare_context\n(Diff Filter & Structural Context Expansion)"] --> N2["Node 2: evaluate_architecture\n(Pluggable LLM Structured Evaluation)"]
+            N2 --> N3["Node 3: validate_findings\n(Self-Reflection Auditor & Verification Pass)"]
         end
 
-        StateMachine --> Report["Pydantic ReviewResult\n(passed, summary, violations, usage)"]
+        StateMachine --> ResultSchema["Pydantic ReviewResult\n(passed, summary, violations, usage)"]
     end
 
-    subgraph EvaluationOutput ["Pipeline Evaluation & Gating"]
-        Report -->|"passed == False (CRITICAL)"| Exit1["❌ Exit Code 1: Block Merge / Alert Team"]
-        Report -->|"passed == True (CLEAN / WARNINGS)"| Exit0["✅ Exit Code 0: Compliant Pipeline Pass"]
+    subgraph CIOutputs ["Quality Gate & Feedback Outputs"]
+        ResultSchema --> CodeQuality["GitLab Code Quality Artifact\n(gl-code-quality-report.json)"]
+        ResultSchema --> MRBot["MR Summary Report Note\n(Idempotent In-Place Update)"]
+        ResultSchema --> QualityGate{"Deterministic Gate\n(Has CRITICAL Violation?)"}
+        QualityGate -->|Yes| GateFail["❌ Exit Code 1: Block Merge"]
+        QualityGate -->|No| GatePass["✅ Exit Code 0: Pipeline Passed"]
+    end
+```
+
+### Complete Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant GL as GitLab / GitHub VCS
+    participant CI as CI/CD Pipeline Runner
+    participant Core as mr-validation Core Engine
+    participant Ctx as Smart Context Expander
+    participant LLM as Pluggable LLM (Gemini / OpenAI / Claude)
+    participant Rep as VCS Reporting Provider
+
+    Dev->>GL: Push Branch & Open Merge Request
+    GL->>CI: Trigger MR Pipeline Event
+    CI->>GL: Clone mr-validation & Fetch Target Branch Diff
+    CI->>Core: Execute cli_local.py (--branch main --rules rules.md)
+    Core->>Ctx: Extract modified files and surrounding context
+    Ctx-->>Core: Enriched context (imports, class scopes, namespaces)
+    Core->>LLM: Node 1 & 2: Structured Review Prompt (Diff + Context + Rules)
+    LLM-->>Core: Candidate Violations & Token Metrics
+    Core->>LLM: Node 3: Self-Reflection Pass (Filter Hallucinations)
+    LLM-->>Core: Verified High-Confidence Violations
+    Core->>Core: Enforce Pydantic Gating (passed = False if CRITICAL)
+    Core->>Rep: Export gl-code-quality-report.json
+    Rep->>GL: Upload Native Code Quality Report Artifact
+    Core->>Rep: Post / Update Idempotent Summary Report Note
+    Rep->>GL: Update MR Discussion Note
+    alt Violations Contain CRITICAL
+        Core-->>CI: Exit Code 1 (Block Merge Request)
+    else Clean or Advisory Warnings Only
+        Core-->>CI: Exit Code 0 (Allow Merge Request)
     end
 ```
 
 ---
 
-## Repository Structure
+## Configuration Flow & Rules Engine
 
-```
-mr-validation/
-├── src/
-│   ├── schemas.py           # Strict Pydantic models (Violation, ReviewResult, TokenUsage)
-│   ├── diff_parser.py       # Excludes lockfiles/binaries and chunks file diffs
-│   ├── context_expander.py  # Language-agnostic Smart Context Expansion (scope, imports, outline)
-│   ├── graph.py             # Multi-node LangGraph state machine with self-reflection
-│   └── integrations/        # VCS Provider contracts for GitLab/GitHub
-│       ├── vcs_base.py      # Abstract VCSProvider interface
-│       ├── gitlab_provider.py # GitLab discussion & MR notes provider stub
-│       └── github_provider.py # GitHub review comments provider stub
-├── rules/
-│   └── architecture.md      # Android Clean Architecture, Kotlin & Java conventions
-├── samples/
-│   ├── violation.diff       # Sample with Presentation & Memory leak violations
-│   ├── clean.diff           # Compliant Clean Architecture sample
-│   └── formatting.diff      # Docs and formatting-only diff sample
-├── tests/
-│   └── test_graph.py        # Pytest test suite (6 passing unit/integration tests)
-├── ci/
-│   └── gitlab-ci.example.yml # GitLab CI/CD template for client repositories
-├── cli_local.py             # Local CLI runner with ANSI colors and token tracking
-├── requirements.txt         # Core dependencies (LangGraph, Google GenAI, Pydantic)
-├── .env.example             # Environment variable template
-├── .env                     # Local API keys (excluded from git)
-└── README.md
-```
-
----
-
-## Multi-Node LangGraph Review Pipeline
-
-The review engine is built as an executable state machine using **LangGraph** (`langgraph.graph.StateGraph`):
+The compliance engine decouples **execution logic** from **architectural rules**. The same engine evaluates mobile applications, web backends, and microservices without code modifications.
 
 ```mermaid
 flowchart LR
-    START((Start)) --> PrepareContext["1. prepare_context\n(Filter diff & Expand Context)"]
-    PrepareContext --> EvaluateArch["2. evaluate_architecture\n(Gemini 3.5 Flash-Lite LLM Review)"]
-    EvaluateArch --> ValidateFindings["3. validate_findings\n(Self-Reflection Verification)"]
-    ValidateFindings --> END((End))
+    subgraph Inputs ["Engine Inputs"]
+        R1["rules/android_clean_arch.md"] -.-> ActiveRules["Active Ruleset"]
+        R2["rules/python_clean_arch.md"] -.-> ActiveRules
+        R3["rules/custom_microservice.md"] -.-> ActiveRules
+        
+        DiffInput["Git Target Branch Diff\n(git diff -U15 origin/main...HEAD)"]
+    end
+
+    subgraph ProcessingEngine ["Review Engine Configuration Flow"]
+        ActiveRules --> Parser["Rules & Context Ingestion"]
+        DiffInput --> Parser
+        Parser --> Orchestrator["LangGraph Pipeline\n(Configured via CLI flags & Env Vars)"]
+    end
+
+    subgraph ConfigOutputs ["Outputs & Artifacts"]
+        Orchestrator --> Terminal["Developer Terminal Report"]
+        Orchestrator --> CQJson["gl-code-quality-report.json"]
+        Orchestrator --> BotNote["GitLab / GitHub MR Discussion"]
+    end
 ```
 
-### Node 1: `prepare_context`
-* Cleans and filters the unified git diff using `diff_parser.py`:
-  * Automatically ignores lockfiles (`package-lock.json`, `poetry.lock`, `gradle.lockfile`), compiled binaries (`.dex`, `.class`, `.jar`, `.aar`, `.so`), images, and minified assets.
-* Executes **Smart Context Expansion** (`context_expander.py`):
-  * Reads the modified file's surrounding source code (if present on disk or git tree).
-  * Extracts module hierarchy, namespace/package, file-level imports, and enclosing classes/functions.
+### Declarative Ruleset Structure
+Rules are defined strictly in Markdown (`rules/*.md`) using explicit severity definitions:
 
-### Node 2: `evaluate_architecture`
-* Formats each file diff alongside its **Expanded Context block**.
-* Calls **Google Gemini (`gemini-3.5-flash-lite`)** via `.with_structured_output(ReviewResult, include_raw=True)`.
-* Instructs Gemini to evaluate architectural compliance strictly based on the provided `arch_rules.md` while ignoring cosmetic indentation, formatting, or comments.
-* Tracks token usage (`input_tokens`, `output_tokens`, `total_tokens`).
+| Rule Category | Severity | Description |
+|---|:---:|---|
+| **Presentation Boundaries** | `CRITICAL` | UI controllers, activities, and routers must never call data layers or database sessions directly. |
+| **Domain Layer Purity** | `CRITICAL` | Pure business entities and use cases must have zero framework or ORM dependencies. |
+| **Encapsulation & Data Leakage** | `CRITICAL` | Infrastructure DTOs or ORM models must not leak across layer boundaries without domain mapping. |
+| **Lifecycle & Concurrency Safety** | `CRITICAL` | No leaking long-lived references to UI contexts; no unstructured concurrency (`GlobalScope.launch` / unmanaged threads). |
+| **Event Loop Non-Blocking** | `CRITICAL` | Synchronous blocking I/O calls (`time.sleep`, synchronous HTTP) are strictly forbidden inside `async def` routines. |
+| **Conventions & Code Health** | `WARNING` | Advisory guidelines: dispatcher injection, immutability, explicit exception handling, and typing. |
 
-### Node 3: `validate_findings`
-* Acts as an **automated self-reflection auditor**:
-  * Cross-references every candidate violation against the modified diff lines (`+` lines) to eliminate hallucinations or false positives.
-  * Ensures `CRITICAL` severity is reserved exclusively for true architectural blockers (layer boundary crossings, memory leaks, unstructured concurrency).
-  * Enforces the hard rule: `passed = False` if any `CRITICAL` violation remains.
+---
+
+## Pluggable LLM & LLMOps Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                   LangGraph Multi-Node State Machine                   │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Unified BaseChatModel Interface
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                     Pluggable LLM Abstraction Layer                    │
+├───────────────────┬───────────────────┬────────────────────────────────┤
+│   Google Gemini   │   OpenAI Models   │        Anthropic Claude        │
+│ gemini-3.5-flash  │   gpt-4o / mini   │      claude-3-5-sonnet/haiku   │
+├───────────────────┼───────────────────┼────────────────────────────────┤
+│  Self-Hosted LLMs │ Enterprise Gateway│     LLMOps & Observability     │
+│ vLLM/Ollama/Llama │  Azure / Bedrock  │   LangSmith / Phoenix / MLflow │
+└───────────────────┴───────────────────┴────────────────────────────────┘
+```
+
+### Zero Vendor Lock-In
+The engine is built on **LangChain & LangGraph standard abstractions** (`BaseChatModel`). Google Gemini is used as the default fast and cost-effective model, but **the LLM backend can be swapped in one configuration line** without changing the orchestrator, schemas, or context expander:
+
+| Provider | Supported Models | Configuration |
+|---|---|---|
+| **Google Gemini (Default)** | `gemini-3.5-flash-lite`, `gemini-1.5-pro` | `GEMINI_MODEL=gemini-3.5-flash-lite`<br/>`GOOGLE_API_KEY=...` |
+| **OpenAI** | `gpt-4o`, `gpt-4o-mini` | `MODEL_PROVIDER=openai`<br/>`OPENAI_API_KEY=...` |
+| **Anthropic** | `claude-3-5-sonnet`, `claude-3-5-haiku` | `MODEL_PROVIDER=anthropic`<br/>`ANTHROPIC_API_KEY=...` |
+| **Self-Hosted / Open-Source** | `Llama 3.3 70B`, `DeepSeek-Coder-V2`, `Qwen 2.5` | Via **Ollama**, **vLLM**, or **LiteLLM Proxy** (OpenAI-compatible endpoint) |
+| **Enterprise Cloud Gateways** | Azure OpenAI, AWS Bedrock, Google Cloud Vertex AI | Enterprise IAM auth, zero data retention compliance |
+
+### Enterprise LLMOps & Observability
+* **End-to-End Tracing:** Compatible with **LangSmith**, **Arize Phoenix**, and **OpenInference**. Traces capture prompts, intermediate self-reflection verification passes, and latency breakdowns.
+* **Token & Cost Tracking:** Every evaluation tracks `input_tokens`, `output_tokens`, and `total_tokens`, enabling precise cost attribution per team, project, or Merge Request.
+* **Structured Output Guarantee:** Leverages native function calling / JSON schema enforcement (`with_structured_output`) to ensure 100% deterministic parsing into Pydantic models.
 
 ---
 
 ## Smart Context Expansion (Beyond Raw Diffs)
 
 ### The Problem with Raw Git Diffs
-In a standard `git diff -U15`, only modified lines and immediate surrounding lines are shown. If a developer edits line 75 of a class:
-* The class header (`class UserViewModel : ViewModel()`) is 70 lines above and **invisible to the LLM**.
-* The file-level imports (`import com.example.data.AppDatabase`) are at line 5 and **invisible to the LLM**.
-* Without context, an LLM cannot know whether the modified class is a ViewModel, an Activity, a UseCase, or an Entity.
+In a standard `git diff -U15`, only modified lines and immediate neighbors are visible. If a developer edits a method in a class:
+* The class signature (`class UserViewModel : ViewModel()`) is 60 lines above and **invisible to the LLM**.
+* The file-level dependencies (`import androidx.lifecycle.ViewModel`) are at the top and **invisible to the LLM**.
+* Without context, an LLM cannot determine whether a modified class is a ViewModel, an Activity, a UseCase, or a Repository.
 
-### The Universal, Platform-Agnostic Solution
-Instead of hardcoding language-specific regex rules, `src/context_expander.py` uses language-agnostic structural heuristics that work across **Kotlin, Java, Swift, Python, Go, C#, TypeScript, Rust, and PHP**:
-
-1. **Path & Module Hierarchy:** Deconstructs the directory path (`app / src / main / java / com / example / ui / payment`).
-2. **File-Level Dependencies:** Collects all `import`, `using`, `from ... import`, or `require` statements from the source file.
-3. **Enclosing Declaration Scopes:** Scans upwards from the modified line to identify enclosing `class`, `struct`, `interface`, `trait`, `service`, `def`, `func`, or `fn` declarations and their supertypes.
-4. **File Structure Outline:** Summarizes declared types and signatures in the file.
-
-#### Raw Diff vs. Enriched Context
-
-````carousel
-```diff
---- a/app/src/main/java/com/example/ui/payment/PaymentViewModel.kt
-+++ b/app/src/main/java/com/example/ui/payment/PaymentViewModel.kt
-@@ -10,3 +10,4 @@ class PaymentViewModel : ViewModel() {
-+    var activityContext: Context? = null
-```
-<!-- slide -->
-```markdown
-### File: app/src/main/java/com/example/ui/payment/PaymentViewModel.kt (Status: modified)
-[Smart Expanded Context]
-  • File: app/src/main/java/com/example/ui/payment/PaymentViewModel.kt
-  • Path Segments: app / src / main / java / com / example / ui / payment
-  • Namespace/Package: com.example.ui.payment
-  • Enclosing Scope: class PaymentViewModel : ViewModel()
-  • Declared Types: class PaymentViewModel : ViewModel()
-  • Imports/Dependencies (2): import android.content.Context, import androidx.lifecycle.ViewModel
-
-```diff
-@@ -10,3 +10,4 @@
-+    var activityContext: Context? = null
-```
-````
+### The Language-Agnostic Solution
+`src/context_expander.py` implements universal structural heuristics that work across **Kotlin, Java, Python, Go, Swift, TypeScript, C#, and Rust**:
+1. **Module Hierarchy:** Deconstructs path segments (e.g., `app / src / main / java / com / example / ui / payment`).
+2. **File Dependencies:** Collects `import`, `from ... import`, `using`, and `require` statements.
+3. **Enclosing Declaration Scopes:** Scans backwards from modified lines to identify enclosing `class`, `def`, `func`, `struct`, or `interface` signatures and inheritance hierarchies.
 
 ---
 
-## Architectural Rules System
+## Multi-Node LangGraph State Machine
 
-Architectural guidelines are completely decoupled into Markdown documents (`rules/architecture.md`). You can swap rulesets per project or language without changing a line of code.
+The review pipeline is modeled as an executable directed graph using `langgraph.graph.StateGraph`:
 
-### Android Clean Architecture Reference (`rules/architecture.md`):
+```mermaid
+flowchart LR
+    START((Start)) --> Node1["1. prepare_context\n(Filter Lockfiles & Expand Surrounding Context)"]
+    Node1 --> Node2["2. evaluate_architecture\n(LLM Structured Review against Markdown Rules)"]
+    Node2 --> Node3["3. validate_findings\n(Self-Reflection Auditor Pass)"]
+    Node3 --> END((End))
+```
 
-| Rule | Severity | Requirement |
-|---|:---:|---|
-| **Rule 1.1: Presentation Boundaries** | `CRITICAL` | ViewModels/Activities must never call Data layer components (Room DAOs, Retrofit API services, DB instances) directly. Must interact via Domain UseCases. |
-| **Rule 1.2: Domain Layer Purity** | `CRITICAL` | Domain layer (Entities, UseCases) must be pure Kotlin/Java with zero Android Framework (`android.*`, `androidx.*`) or ORM annotations (`@Entity`, `@Dao`). |
-| **Rule 1.3: Data Layer Encapsulation** | `CRITICAL` | Network DTOs and Room entities must not leak into Presentation layer; they must be mapped to pure Domain models via mappers. |
-| **Rule 2.1: Lifecycle & Leaks** | `CRITICAL` | ViewModels or long-lived Singletons must never retain references to Android `Context`, `Activity`, `Fragment`, or `View`. |
-| **Rule 2.2: Concurrency Lifecycles** | `CRITICAL` | Never launch coroutines using `GlobalScope`. Use structured concurrency (`viewModelScope` or `lifecycleScope`). |
-| **Rule 3.1: Immutability & State** | `WARNING` | ViewModels must expose immutable `StateFlow` to the UI. The backing `MutableStateFlow` must be private. |
-| **Rule 3.2: Dispatcher Injection** | `WARNING` | Do not hardcode `Dispatchers.IO` or `Dispatchers.Default` in repositories. Inject `CoroutineDispatcher` for unit testability. |
-| **Rule 3.3: Kotlin Null-Safety** | `WARNING` | Avoid force unwrapping `!!`. Use safe calls (`?.`), Elvis operator (`?:`), or smart casting. |
+1. **Node 1: `prepare_context`:** Cleans git diffs by ignoring lockfiles (`package-lock.json`, `poetry.lock`, `gradle.lockfile`), compiled binaries (`.dex`, `.class`, `.jar`, `.so`), and images. Enriches code chunks with smart context blocks.
+2. **Node 2: `evaluate_architecture`:** Calls the LLM with structured Pydantic output schemas, evaluating the diff against the declarative rulebook while ignoring cosmetic whitespace or formatting.
+3. **Node 3: `validate_findings` (Self-Reflection Auditor):** A verification pass that cross-references candidate issues against actual modified lines (`+` lines) to eliminate hallucinations and false positives before building the final report.
 
 ---
 
-## Production CI/CD Integration (GitLab CI)
+## Tools & Technologies Stack
 
-You can integrate this review engine into any new repository on GitLab in three steps:
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Language & Runtime** | **Python 3.11+** | Cross-platform core runtime (Linux, macOS, Windows). |
+| **Orchestration** | **LangGraph** (`StateGraph`) | Stateful, multi-node workflow orchestration with self-reflection. |
+| **Model Abstraction** | **LangChain** (`BaseChatModel`) | Pluggable LLM interface supporting Gemini, OpenAI, Claude, and local models. |
+| **Data Validation** | **Pydantic v2** | Type-safe schemas and deterministic quality gating (`passed = False`). |
+| **Context Parser** | **Custom Structural Heuristics** | Language-agnostic scope and dependency expansion. |
+| **VCS & CI/CD** | **GitLab REST API v4 & GitHub CLI** | MR discussion management, notes update, and CI runner integration. |
+| **Reporting Standard** | **GitLab Code Quality Schema** | Native Code Climate subset schema for MR widget integration. |
+| **CLI & Testing** | **Colorama, Pytest, Requests** | Rich terminal ANSI output, integration testing, and HTTP communication. |
 
-### Step 1: Authorize the Client Project in `mr-validation`
-Because `mr-validation` is a private repository, allow the client project's runner to clone it via `CI_JOB_TOKEN`:
-```powershell
-# 1. Fetch your target project ID
-$CLIENT_ID = (glab api projects/<USERNAME>%2F<PROJECT_NAME> | ConvertFrom-Json).id
+---
 
-# 2. Add to inbound allowlist in mr-validation (ID: 88924590)
-glab api --method POST projects/88924590/job_token_scope/allowlist --raw-field target_project_id=$CLIENT_ID
-```
+## Production Setup Guide
 
-### Step 2: Configure CI/CD Variables
-Configure your Gemini API key and GitLab token as masked CI/CD variables:
-```powershell
-# Required: Google Gemini API Key
-glab variable set GOOGLE_API_KEY --value "YOUR_GEMINI_KEY" --masked --protected=false --repo <USERNAME>/<PROJECT_NAME>
-
-# Optional (for automated MR bot comments & inline suggestions):
-glab variable set GITLAB_TOKEN --value "YOUR_GITLAB_ACCESS_TOKEN" --masked --protected=false --repo <USERNAME>/<PROJECT_NAME>
-```
-
-### Step 3: Add `.gitlab-ci.yml` to the Client Project
-Drop this standard job into `.gitlab-ci.yml` in the root of the client project:
+### Step 1: Add Review Engine to Your Repository / CI
+Any client project (Android, Python backend, iOS, etc.) can integrate the compliance check in `.gitlab-ci.yml`:
 
 ```yaml
 stages:
@@ -227,184 +259,138 @@ architectural_compliance_check:
   stage: compliance
   image: python:3.11-slim
   rules:
-    # Trigger automatically on every Merge Request
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   variables:
     GEMINI_MODEL: "gemini-3.5-flash-lite"
-    GIT_DEPTH: "0" # Full git history to compare branch against target
+    GIT_DEPTH: "0" # Full git history to resolve base branch comparisons
   before_script:
     - apt-get update && apt-get install -y git
     - pip install --upgrade pip
-    # Clone the centralized engine using the GitLab CI Job Token
-    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/debbiswas2002/mr-validation.git /tmp/mr-validation
+    - git clone https://gitlab.com/debbiswas2002/mr-validation.git /tmp/mr-validation
     - pip install -r /tmp/mr-validation/requirements.txt
   script:
-    # 1. Fetch base target branch (e.g. main)
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-    # 2. Execute compliance review with Code Quality JSON artifact and automated MR bot comments
     - >
       python /tmp/mr-validation/cli_local.py
       --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-      --rules /tmp/mr-validation/rules/architecture.md
+      --rules /tmp/mr-validation/rules/python_architecture.md
       --export-codequality gl-code-quality-report.json
       --post-gitlab-comments
-  allow_failure: true # Change to false to strictly block non-compliant MRs from merging
+  allow_failure: false # Strict quality gate: blocks non-compliant MRs from merging
   artifacts:
     when: always
     reports:
-      # Native GitLab MR Code Quality widget integration
       codequality: gl-code-quality-report.json
     paths:
       - gl-code-quality-report.json
     expire_in: 7 days
 ```
 
+### Step 2: Configure Environment Variables
+Set the following masked CI/CD variables in your repository:
+* `GOOGLE_API_KEY`: API key for Gemini (or `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`).
+* `GITLAB_TOKEN`: Access token with `api` scope (required for posting summary notes to MR discussions).
+
+### Step 3: Local Developer CLI Workflow
+Developers can validate branches or patch files locally before opening an MR:
+
+```bash
+# Test current git branch against main
+python cli_local.py --branch main
+
+# Test against a custom ruleset
+python cli_local.py --branch main --rules rules/python_architecture.md
+
+# Evaluate a specific .diff or .patch file
+python cli_local.py --diff samples/violation.diff
+
+# Export GitLab Code Quality JSON artifact locally
+python cli_local.py --diff samples/violation.diff --export-codequality gl-code-quality-report.json
+```
+
 ---
 
-## Native GitLab Code Quality Report Integration (MR Widget)
+## Native GitLab MR Widget & Reporting
 
-The compliance checker exports violations into GitLab's native [Code Quality report schema](https://docs.gitlab.com/ee/ci/testing/code_quality.html) (`src/codequality.py`).
-
-### Generated `gl-code-quality-report.json` Format:
+### 1. Native GitLab Code Quality Report Widget
+The engine generates `gl-code-quality-report.json` conforming to GitLab's Code Quality schema:
 ```json
 [
   {
-    "description": "Activities, Fragments, and ViewModels must never call Data Layer components directly. (Suggested Fix: Introduce a Domain UseCase or Repository interface)",
+    "description": "The router endpoint directly queries UserOrmModel without delegating to a Domain Service. (Recommendation: Delegate all data operations to a Domain Service)",
     "check_name": "Rule 1.1: Presentation Layer Boundaries",
-    "fingerprint": "d12bc9aa6eba6ddd354e28071b17b535",
+    "fingerprint": "1f8e24c9657062f6277054ddcecaec3d",
     "severity": "critical",
     "location": {
-      "path": "app/src/main/java/com/example/ui/MainActivity.kt",
+      "path": "src/api/routers.py",
       "lines": {
-        "begin": 17
+        "begin": 48
       }
     }
   }
 ]
 ```
+GitLab automatically parses this artifact to render an interactive health card directly inside the Merge Request overview page:
+> *"Code Quality degraded on 3 points (3 Critical)"*
 
-### Native GitLab MR Widget Integration:
-When `artifacts: reports: codequality: gl-code-quality-report.json` is configured in `.gitlab-ci.yml`:
-* **MR Overview Widget:** Directly embeds an architectural health card:
-  > *"Code Quality degraded on 2 points"*
-* **Expandable Issue List:** Shows severity icons (🔴 Critical / 🟡 Minor), rule names, and clickable links to the exact file path and line number in the MR diff.
-* **Diff Comparison:** Highlights newly introduced violations in the current MR compared against the target branch (`main`).
-
----
-
-## GitLab MR Bot Comments & Inline Discussions (`GitLabProvider`)
-
-The review engine includes a full Version Control System provider (`src/integrations/gitlab_provider.py`) implementing `VCSProvider`:
-
-### 1. High-Level Summary Note (Idempotent)
-* Posts an overview markdown report to `POST /projects/:id/merge_requests/:mr_iid/notes`.
-* Displays review status badge (`❌ FAILED`, `⚠️ PASSED WITH WARNINGS`, or `✅ PASSED`), an executive summary, a structured violations table, and collapsible LLM inference metrics.
-* **Idempotent:** Embeds a hidden marker `<!-- mr-validation-summary-marker -->`. Subsequent pipeline runs automatically **update the existing note** via `PUT /notes/:id` to prevent comment clutter on the MR.
-
-### 2. Line-Level Inline Discussions & Architectural Guidance
-* Posts directly to the affected line in the MR diff via `POST /projects/:id/merge_requests/:mr_iid/discussions`.
-* Anchors discussion threads precisely using `diff_refs` (`base_sha`, `start_sha`, `head_sha`) and `position.new_line`.
-* **Focused Architectural Guidance:** Focuses strictly on clear rule explanations and architectural design recommendations without cluttered or hallucinated code replacement patches:
-
-```markdown
-### 🔴 `[CRITICAL]` Architectural Violation: Rule 2.1: Lifecycle & Memory Leaks
-
-**Explanation:** A ViewModel must never retain a reference to an Activity or Context object. Retaining hostActivity in LoginViewModel causes activity leaks across configuration changes.
-
-**Recommendation:** Remove the hostActivity property completely and pass callbacks or observe StateFlow events from the UI layer.
-```
+### 2. Idempotent MR Discussion Summary Note
+The bot publishes a single high-level Markdown report on the MR discussion thread:
+* Displays review status badge (`❌ FAILED` / `✅ PASSED`), executive summary, violations table, and token metrics.
+* **Idempotent In-Place Updating:** Re-running the pipeline updates the existing bot note via `PUT /notes/:id` using a hidden marker comment (`<!-- mr-validation-summary-marker -->`), completely eliminating comment spam.
 
 ---
 
-## Local CLI Runner & Developer Workflow
+## Tested Multi-Language Production Case Studies
 
-Developers can test their local git branch or a `.diff` patch locally before pushing:
+The engine was tested live across multiple production repositories and real Merge Requests:
 
-```bash
-# Compare current git branch against main
-python cli_local.py --branch main
+### 1. Android Clean Architecture (Kotlin / Java)
+Tested on [`debbiswas2002/MyTestApp`](https://gitlab.com/debbiswas2002/MyTestApp):
+* **MR !1:** Compliant Clean Architecture refactoring (Result: ✅ `PASSED`)
+* **MR !2:** Payment module with database queries in Activity (Result: ❌ `FAILED`, 3 Critical)
+* **MR !3:** Memory leak (`Activity` in ViewModel) & `GlobalScope` concurrency (Result: ❌ `FAILED`, 2 Critical)
+* **MR !4:** Presentation boundary breach & raw DTO leakage to UI (Result: ❌ `FAILED`, 2 Critical)
+* **MR !5:** Kotlin conventions & mutability warnings (Result: ⚠️ `PASSED w/ 3 WARNINGS`)
+* **MR !6:** False-positive test on documentation and KDoc comments (Result: ✅ `PASSED`, 0 False Positives)
+* **MR !7:** Complete end-to-end Product Catalog Clean Architecture feature (Result: ✅ `PASSED`)
 
-# Evaluate a specific .diff file
-python cli_local.py --diff samples/violation.diff
-
-# Export native GitLab Code Quality report artifact
-python cli_local.py --diff samples/violation.diff --export-codequality gl-code-quality-report.json
-
-# Post automated MR bot review and inline discussions to GitLab
-python cli_local.py --branch main --export-codequality gl-code-quality-report.json --post-gitlab-comments
-
-# Use custom architectural rules or Gemini models
-python cli_local.py --branch main --rules ./custom-rules.md --model gemini-3.5-flash-lite
-```
-
-### Sample Terminal Report Output
-
-```text
-===========================================================================
-  Merge Request Architectural Compliance Checker (AI Review Engine)
-  Powered by LangGraph & Google Gemini (gemini-3.5-flash-lite)
-===========================================================================
-
-Loaded rules from: rules/architecture.md
-Loaded diff from:  samples/violation.diff
-
-Running LangGraph review workflow using gemini-3.5-flash-lite...
-
---- EVALUATION SUMMARY ---
-The pull request contains critical architectural violations including direct database access from the Presentation layer (Activity) and storing an Android Context reference inside a ViewModel.
-
---- ARCHITECTURAL VIOLATIONS DETECTED (2) ---
-1. [CRITICAL] app/src/main/java/com/example/ui/MainActivity.kt:18
-   Rule: Presentation Layer Boundaries
-   Explanation: Activities, Fragments, and ViewModels must never call Data Layer components directly.
-   Suggested Fix: Remove direct database calls from MainActivity. Delegate data fetching to a Domain UseCase.
-
-2. [CRITICAL] app/src/main/java/com/example/ui/UserViewModel.kt:9
-   Rule: No UI Context or View References in ViewModels
-   Explanation: Storing activityContext in a ViewModel causes severe activity and memory leaks across configuration changes.
-   Suggested Fix: Remove activityContext property from UserViewModel.
-
---- GEMINI USAGE METRICS ---
-  • Model:         gemini-3.5-flash-lite
-  • Input Tokens:  4,096
-  • Output Tokens: 825
-  • Total Tokens:  4,921
-
-===========================================================================
->>> RESULT: FAILED (Critical architectural violations must be resolved) <<<
-===========================================================================
-```
+### 2. Python Clean Architecture (FastAPI & SQLAlchemy)
+Tested on [`debbiswas2002/mytestpython`](https://gitlab.com/debbiswas2002/mytestpython):
+* **MR !1:** User purge and audit logging module tested against [rules/python_architecture.md](rules/python_architecture.md):
+  - Direct ORM query & session instantiation inside FastAPI router (*Rule 1.1 Breach*)
+  - Blocking synchronous `time.sleep` and `requests.get` inside `async def` (*Rule 2.1 Breach*)
+  - Broad exception suppression `except Exception: pass` (*Rule 3.1 Warning*)
+  - ORM `Base` model defined inside domain entities (*Rule 1.2 Breach*)
+  - **Pipeline Outcome:** ❌ **FAILED (Strict Gating Enforced with `allow_failure: false`)**
 
 ---
 
-## Tested Real-World Scenarios
+## Automated Test Suite
 
-The engine was tested in production across 7 live Merge Requests in [`MyTestApp`](https://gitlab.com/debbiswas2002/MyTestApp):
-
-| MR | Scenario Name | Test Objective | Pipeline Outcome |
-|:---:|---|---|:---:|
-| **[!1](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/1)** | Clean Architecture Initial Refactoring | Verifies compliant 3-layer architecture with DTO mapping | ✅ **PASSED** (0 Violations) |
-| **[!2](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/2)** | Payment Module with Violations | Tests multi-violation detection: direct DB query, Context in ViewModel, and Android framework in Domain | ❌ **FAILED** (3 CRITICAL) |
-| **[!3](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/3)** | Memory Leak & GlobalScope in ViewModel | Tests lifecycle leak detection (`Activity` in ViewModel) & `GlobalScope.launch` | ❌ **FAILED** (2 CRITICAL) |
-| **[!4](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/4)** | Presentation Boundary Breach & DTO Leak | Tests layer boundary breach (Activity directly querying API) & raw DTO leakage to UI | ❌ **FAILED** (2 CRITICAL) |
-| **[!5](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/5)** | Kotlin Conventions & Mutability Warnings | Tests non-blocking advisory warnings: public `MutableStateFlow`, hardcoded `Dispatchers.IO`, and `!!` operator | ⚠️ **PASSED (w/ 3 Warnings)** |
-| **[!6](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/6)** | Documentation & KDoc Comments | Tests false-positive resilience on markdown and code comment edits | ✅ **PASSED** (0 Violations) |
-| **[!7](https://gitlab.com/debbiswas2002/MyTestApp/-/merge_requests/7)** | Full Clean Architecture Feature (Product Catalog) | Complete end-to-end feature module: Domain UseCase, Data DTO mapper with injected Dispatcher, Compose screen | ✅ **PASSED** (0 Violations) |
-
----
-
-## Automated Pytest Test Suite
-
-The test suite in [`tests/test_graph.py`](tests/test_graph.py) runs unit tests on diff parsing and Pydantic models, plus end-to-end integration tests using Gemini:
+Run the full automated test suite covering diff parsing, schema validators, context expansion, code quality JSON generation, and VCS provider communications:
 
 ```powershell
-python -m pytest tests/test_graph.py -v
+python -m pytest tests/ -v
 ```
 
-### Test Coverage:
-* `test_diff_parser_filters_lockfiles_and_binaries`: Ensures lockfiles and binary media are excluded.
-* `test_pydantic_schema_enforces_critical_failure`: Verifies `ReviewResult` validator enforces `passed = False` whenever a `CRITICAL` violation is present.
-* `test_smart_context_expansion_platform_agnostic`: Verifies universal header parsing and enclosing scope detection.
-* `test_critical_architectural_violation_detected`: Integration test on diff with critical violations (must fail).
-* `test_clean_architecture_diff_passes`: Integration test on compliant Clean Architecture diff (must pass).
-* `test_formatting_and_comments_no_false_positives`: Verifies zero false positives on comment/documentation edits.
+```text
+tests/test_codequality.py::test_codequality_json_generation_structure PASSED [  8%]
+tests/test_codequality.py::test_codequality_save_report PASSED               [ 16%]
+tests/test_gitlab_provider.py::test_format_summary_markdown PASSED           [ 25%]
+tests/test_gitlab_provider.py::test_post_summary_comment_creates_new_note PASSED [ 33%]
+tests/test_gitlab_provider.py::test_post_summary_comment_updates_existing_note PASSED [ 41%]
+tests/test_gitlab_provider.py::test_post_inline_comments PASSED              [ 50%]
+tests/test_graph.py::test_diff_parser_filters_lockfiles_and_binaries PASSED  [ 58%]
+tests/test_graph.py::test_pydantic_schema_enforces_critical_failure PASSED  [ 66%]
+tests/test_graph.py::test_smart_context_expansion_platform_agnostic PASSED   [ 75%]
+tests/test_graph.py::test_critical_architectural_violation_detected PASSED  [ 83%]
+tests/test_graph.py::test_clean_architecture_diff_passes PASSED              [ 91%]
+tests/test_graph.py::test_formatting_and_comments_no_false_positives PASSED [100%]
+============================== 12 passed in 8.60s ==============================
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
