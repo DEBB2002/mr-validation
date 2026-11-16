@@ -53,7 +53,7 @@ flowchart TD
         OpenMR --> TriggerCI["GitLab CI / GitHub Actions Triggered"]
     end
 
-    subgraph CentralEngine ["Central Review Engine (mr-validation)"]
+    subgraph CentralEngine ["Central Review Engine (mr-architecture-tool)"]
         TriggerCI -->|"1. Clone Review Engine via CI Token"| Runner["CI Job Runner (Python 3.11)"]
         TriggerCI -->|"2. Fetch Base Branch Diff"| GitDiff["Unified Git Diff (-U15)"]
         
@@ -88,14 +88,14 @@ sequenceDiagram
     actor Dev as Developer
     participant GL as GitLab / GitHub VCS
     participant CI as CI/CD Pipeline Runner
-    participant Core as mr-validation Core Engine
+    participant Core as mr-architecture-tool Core Engine
     participant Ctx as Smart Context Expander
     participant LLM as Pluggable LLM (Gemini / OpenAI / Claude)
     participant Rep as VCS Reporting Provider
 
     Dev->>GL: Push Branch & Open Merge Request
     GL->>CI: Trigger MR Pipeline Event
-    CI->>GL: Clone mr-validation & Fetch Target Branch Diff
+    CI->>GL: Clone mr-architecture-tool & Fetch Target Branch Diff
     CI->>Core: Execute cli_local.py (--branch main --rules rules.md)
     Core->>Ctx: Extract modified files and surrounding context
     Ctx-->>Core: Enriched context (imports, class scopes, namespaces)
@@ -298,14 +298,14 @@ architectural_compliance_check:
   before_script:
     - apt-get update && apt-get install -y git
     - pip install --upgrade pip
-    - git clone https://gitlab.com/debbiswas2002/mr-validation.git /tmp/mr-validation
-    - pip install -r /tmp/mr-validation/requirements.txt
+    - git clone https://gitlab.com/debbiswas2002/mr-architecture-tool.git /tmp/mr-architecture-tool
+    - pip install -r /tmp/mr-architecture-tool/requirements.txt
   script:
     - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
     - >
-      python /tmp/mr-validation/cli_local.py
+      python /tmp/mr-architecture-tool/cli_local.py
       --branch "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
-      --rules /tmp/mr-validation/rules/architecture.md
+      --rules /tmp/mr-architecture-tool/rules/architecture.md
       --export-codequality gl-code-quality-report.json
       --post-gitlab-comments
   allow_failure: false # Strict quality gate: blocks non-compliant MRs from merging
