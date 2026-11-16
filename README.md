@@ -160,6 +160,41 @@ Rules are defined strictly in Markdown (`rules/*.md`) using explicit severity de
 
 ---
 
+### 🌐 100% Swappable, Platform-Independent Rules (`architecture.md`)
+
+A core architectural breakthrough of this engine is that **it contains ZERO hardcoded programming language or framework logic** in Python. 
+
+The review engine is **100% language- and platform-independent**:
+* **Language-Agnostic Core:** The exact same Python engine evaluates Android (Kotlin/Java), Python (FastAPI/Django), iOS (Swift), Go (Microservices), Java/Kotlin (Spring Boot), TypeScript/JavaScript (Node/React/NestJS), C# (.NET), and Rust.
+* **Declarative Markdown Policy:** All architectural boundaries, layer separation rules, and best practices reside entirely within a plain Markdown document (`architecture.md`).
+* **Swappable Per Project / Repository:** You can supply your own custom rules file via the `--rules` CLI flag or CI environment variable, pointing to an internal repository standard or a centralized organizational rulebook.
+
+#### Ready-to-Use Cross-Platform Rulesets Included:
+| Platform / Language | Architecture Pattern | Included Ruleset |
+|---|---|---|
+| **Android (Kotlin / Java)** | Clean Architecture / MVI / MVVM | [`rules/architecture.md`](rules/architecture.md) |
+| **Python (FastAPI / Django / Flask)** | Clean Architecture / Layered Service Pattern | [`rules/python_architecture.md`](rules/python_architecture.md) |
+| **Go (Golang)** | Hexagonal Architecture (Ports & Adapters) | [`rules/go_hexagonal_architecture.md`](rules/go_hexagonal_architecture.md) |
+| **iOS (Swift / SwiftUI)** | VIPER / Clean Swift Architecture | [`rules/ios_viper_architecture.md`](rules/ios_viper_architecture.md) |
+| **Custom / Internal** | Any domain-specific architectural boundary | Simply pass `--rules ./my-team-rules.md` |
+
+#### How Simple Ruleset Swapping Is:
+```bash
+# Evaluate an Android Kotlin MR
+python cli_local.py --branch main --rules rules/architecture.md
+
+# Evaluate a Python FastAPI / SQLAlchemy MR
+python cli_local.py --branch main --rules rules/python_architecture.md
+
+# Evaluate a Go Microservice MR
+python cli_local.py --branch main --rules rules/go_hexagonal_architecture.md
+
+# Evaluate an iOS Swift MR
+python cli_local.py --branch main --rules rules/ios_viper_architecture.md
+```
+
+---
+
 ## Pluggable LLM & LLMOps Architecture
 
 ```
