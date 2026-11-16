@@ -301,21 +301,17 @@ The review engine includes a full Version Control System provider (`src/integrat
 * Displays review status badge (`❌ FAILED`, `⚠️ PASSED WITH WARNINGS`, or `✅ PASSED`), an executive summary, a structured violations table, and collapsible LLM inference metrics.
 * **Idempotent:** Embeds a hidden marker `<!-- mr-validation-summary-marker -->`. Subsequent pipeline runs automatically **update the existing note** via `PUT /notes/:id` to prevent comment clutter on the MR.
 
-### 2. Line-Level Inline Discussions & Code Suggestions
+### 2. Line-Level Inline Discussions & Architectural Guidance
 * Posts directly to the affected line in the MR diff via `POST /projects/:id/merge_requests/:mr_iid/discussions`.
 * Anchors discussion threads precisely using `diff_refs` (`base_sha`, `start_sha`, `head_sha`) and `position.new_line`.
-* **Single-Click Suggestion Blocks:** Employs GitLab's native ` ```suggestion ```` blocks so developers can apply architectural fixes with a single click right in the GitLab code review UI:
+* **Focused Architectural Guidance:** Focuses strictly on clear rule explanations and architectural design recommendations without cluttered or hallucinated code replacement patches:
 
 ```markdown
 ### 🔴 `[CRITICAL]` Architectural Violation: Rule 2.1: Lifecycle & Memory Leaks
 
 **Explanation:** A ViewModel must never retain a reference to an Activity or Context object. Retaining hostActivity in LoginViewModel causes activity leaks across configuration changes.
 
-**Suggested Action:**
-```suggestion
-// Remove hostActivity property completely
-// Pass callbacks or rely on ViewModel events / StateFlow
-```
+**Recommendation:** Remove the hostActivity property completely and pass callbacks or observe StateFlow events from the UI layer.
 ```
 
 ---

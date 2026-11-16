@@ -14,7 +14,10 @@ class Violation(BaseModel):
         description="Severity: 'CRITICAL' blocks the MR; 'WARNING' is advisory."
     )
     explanation: str = Field(description="Detailed explanation of why this violates architectural guidelines.")
-    suggested_fix: str = Field(description="Actionable suggestion or code pattern to resolve the violation.")
+    suggested_fix: Optional[str] = Field(
+        default=None,
+        description="High-level architectural recommendation to resolve the violation. Do NOT provide code snippets, syntax patches, or code replacement suggestions."
+    )
 
 
 class TokenUsage(BaseModel):

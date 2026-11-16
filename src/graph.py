@@ -113,10 +113,12 @@ def evaluate_architecture_node(state: ReviewState) -> Dict[str, Any]:
         "EVALUATION GUIDELINES:\n"
         "1. Strictly enforce the provided Architectural Rules against the diff and its expanded context.\n"
         "2. Do NOT flag cosmetic styling, whitespace, indentation, or minor comment edits unless they violate stated rules.\n"
-        "3. Mark severity as 'CRITICAL' if changes break architectural boundaries, violate layer encapsulation, "
+        "3. DO NOT GENERATE CODE SUGGESTIONS, CODE SNIPPETS, OR RAW PATCH REPLACEMENTS. Do not write or rewrite code.\n"
+        "4. For each violation, provide an architectural explanation and a clear, high-level recommendation (e.g. 'Delegate database queries to a Domain Service or Repository' or 'Inject CoroutineDispatcher via constructor').\n"
+        "5. Mark severity as 'CRITICAL' if changes break architectural boundaries, violate layer encapsulation, "
         "cause resource/lifecycle leaks, or violate core design rules specified in the architecture document.\n"
-        "4. Mark severity as 'WARNING' for non-blocking conventions, testability issues, or advisory guidelines.\n"
-        "5. If no architectural rules are violated, return passed=True with an empty violations list."
+        "6. Mark severity as 'WARNING' for non-blocking conventions, testability issues, or advisory guidelines.\n"
+        "7. If no architectural rules are violated, return passed=True with an empty violations list."
     )
 
     user_prompt = (
@@ -197,7 +199,8 @@ def validate_findings_node(state: ReviewState) -> Dict[str, Any]:
         "1. Verify that the violation actually exists in the modified diff lines (+ lines).\n"
         "2. Discard any false positives, hallucinated lines, or nitpicks that are not true violations of the rules.\n"
         "3. Confirm that 'CRITICAL' severity is reserved for true architectural blockers.\n"
-        "4. Return the finalized ReviewResult containing only verified, high-confidence violations."
+        "4. Ensure recommendations are high-level architectural guidance, NOT raw code suggestions.\n"
+        "5. Return the finalized ReviewResult containing only verified, high-confidence violations."
     )
 
     user_prompt = (

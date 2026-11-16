@@ -82,7 +82,7 @@ def display_report(report, ignored_files, model_name: str):
             print(f"{idx}. {badge} {Fore.CYAN}{v.file_path}{loc}{Style.RESET_ALL}")
             print(f"   {Fore.WHITE}Rule:{Style.RESET_ALL} {v.rule_violated}")
             print(f"   {Fore.WHITE}Explanation:{Style.RESET_ALL} {v.explanation}")
-            print(f"   {Fore.GREEN}Suggested Fix:{Style.RESET_ALL} {v.suggested_fix}\n")
+            print(f"   {Fore.GREEN}Recommendation:{Style.RESET_ALL} {v.suggested_fix}\n")
     else:
         print(f"{Fore.GREEN}{Style.BRIGHT}✓ No architectural violations found! All guidelines satisfied.{Style.RESET_ALL}\n")
 
@@ -135,7 +135,13 @@ def main():
     parser.add_argument(
         "--post-gitlab-comments",
         action="store_true",
-        help="Post summary and inline discussion comments to GitLab MR via API."
+        help="Post architectural review summary report to GitLab MR via API."
+    )
+    parser.add_argument(
+        "--post-inline-comments",
+        action="store_true",
+        default=False,
+        help="Post inline review comments on diff lines without code suggestions (default: False, summary report only)."
     )
     parser.add_argument(
         "--gitlab-token",
@@ -227,17 +233,17 @@ def main():
             try:
                 gl_provider = GitLabProvider(token=token, project_id=project_id)
                 
-                # 6a. Post high-level summary note
+                # 6a. Post high-level architectural summary report note
                 summary_ok = gl_provider.post_summary_comment(mr_iid, report)
                 if summary_ok:
-                    print(f"  {Fore.GREEN}✓ Successfully posted/updated summary note on MR !{mr_iid}{Style.RESET_ALL}")
+                    print(f"  {Fore.GREEN}✓ Successfully posted/updated architectural report on MR !{mr_iid}{Style.RESET_ALL}")
                 else:
-                    print(f"  {Fore.YELLOW}⚠️ Failed to post summary note on MR !{mr_iid}{Style.RESET_ALL}")
+                    print(f"  {Fore.YELLOW}⚠️ Failed to post architectural report on MR !{mr_iid}{Style.RESET_ALL}")
 
-                # 6b. Post inline discussion comments for violations
-                if report.violations:
+                # 6b. Post inline discussion comments only if explicitly enabled
+                if args.post_inline_comments and report.violations:
                     inline_count = gl_provider.post_inline_comments(mr_iid, report.violations)
-                    print(f"  {Fore.GREEN}✓ Posted {inline_count} inline discussion comments with code suggestions.{Style.RESET_ALL}")
+                    print(f"  {Fore.GREEN}✓ Posted {inline_count} inline discussion comments.{Style.RESET_ALL}")
                 print()
             except Exception as e:
                 print(f"  {Fore.RED}⚠️ Failed to post GitLab MR comments: {e}{Style.RESET_ALL}\n", file=sys.stderr)

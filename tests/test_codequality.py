@@ -44,7 +44,7 @@ def test_codequality_json_generation_structure():
     assert item1["location"]["lines"]["begin"] == 15
     assert "fingerprint" in item1
     assert "memory leaks" in item1["description"]
-    assert "Suggested Fix:" in item1["description"]
+    assert "Recommendation:" in item1["description"]
 
     # Verify second issue (WARNING -> minor)
     item2 = items[1]

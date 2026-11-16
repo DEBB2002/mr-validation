@@ -34,10 +34,10 @@ def generate_codequality_json(report: ReviewResult) -> List[Dict[str, Any]]:
         raw_fingerprint = f"{violation.file_path}:{line_num}:{violation.rule_violated}"
         fingerprint = hashlib.md5(raw_fingerprint.encode("utf-8")).hexdigest()
 
-        # Build clean description combining explanation and fix
+        # Build clean description combining explanation and recommendation
         desc = violation.explanation.strip()
         if violation.suggested_fix:
-            desc = f"{desc} (Suggested Fix: {violation.suggested_fix.strip()})"
+            desc = f"{desc} (Recommendation: {violation.suggested_fix.strip()})"
 
         severity_level = SEVERITY_MAPPING.get(violation.severity.upper(), "major")
 

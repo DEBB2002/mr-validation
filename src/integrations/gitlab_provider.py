@@ -3,7 +3,7 @@ GitLab VCS Provider Implementation.
 Interacts with GitLab REST API v4 for:
 - Fetching MR raw diffs
 - Posting idempotent MR summary notes with architectural reports
-- Posting line-level inline discussions and suggestions on MR diffs
+- Posting line-level inline discussions on MR diffs
 """
 
 import json
@@ -127,7 +127,7 @@ class GitLabProvider(VCSProvider):
             for v in report.violations:
                 sev_icon = "🔴 `CRITICAL`" if v.severity.upper() == "CRITICAL" else "🟡 `WARNING`"
                 loc = f"`{v.file_path}:{v.line_number}`" if v.line_number else f"`{v.file_path}`"
-                fix_text = f"<br/>💡 **Suggested Fix:** {v.suggested_fix}" if v.suggested_fix else ""
+                fix_text = f"<br/>💡 **Recommendation:** {v.suggested_fix}" if v.suggested_fix else ""
                 lines.append(f"| {sev_icon} | {loc} | **{v.rule_violated}** | {v.explanation}{fix_text} |")
             lines.append("")
         else:
@@ -234,10 +234,7 @@ class GitLabProvider(VCSProvider):
             if v.suggested_fix:
                 body_parts.extend([
                     "",
-                    "**Suggested Action:**",
-                    "```suggestion",
-                    f"{v.suggested_fix}",
-                    "```",
+                    f"**Recommendation:** {v.suggested_fix}",
                 ])
 
             body_text = "\n".join(body_parts)
@@ -272,7 +269,7 @@ class GitLabProvider(VCSProvider):
                 )
                 # Fallback to general note referencing the file and line
                 fallback_data = {
-                    "body": f"⚠️ **[{v.severity}] {v.rule_violated}** on `{v.file_path}:{v.line_number}`:\n\n{v.explanation}\n\n*Fix:* {v.suggested_fix}"
+                    "body": f"⚠️ **[{v.severity}] {v.rule_violated}** on `{v.file_path}:{v.line_number}`:\n\n{v.explanation}\n\n*Recommendation:* {v.suggested_fix}"
                 }
                 fb_resp = self._request(f"merge_requests/{mr_id}/notes", method="POST", data=fallback_data)
                 if fb_resp.status_code in (200, 201):
